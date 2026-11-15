@@ -786,7 +786,7 @@ Exception in AIColonists.ThinkTree.ThinkNode_ConditionalAIColonist TryIssueJobPa
 **Fix:** per-candidate try/catch around `scanner.JobOnThing(pawn, t)` in `AddWorkAffordances` — skip the candidate, `Log.ErrorOnce(…, 4813)` once per session. Defensive rule honored: vanilla flow never breaks, error logged once, scan continues with all other options intact.
 
 **Build / test record:** product build vs real DLLs **0/0** (first attempt failed CS0246 — `using System;` missing in AffordanceScanner.cs). Harness **257/257** ×2 (2 new checks: throwing `JobOnThing` → candidate skipped + scan completes; unrelated options still offered).
-- Deploy PENDING — game running (user mid-H4). Staged in `Assemblies\`; deploy on close with robocopy `/MIR /XF .gitignore /XD Source Tests /R:1 /W:1` + hash verify.
+- **Deployed 2026-11-15** (game closed): DLL SHA256 `19D345EE06F0849F9B6078D71FB2FB07760CD2E17EC9B0CE98794D1D19BCBE12` (rebuilt with `DebugType=none` — strips the PDB build-path record; functionally identical). robocopy `/MIR /XF .gitignore /XD Source Tests .git /R:1 /W:1`, live == staged hash verified.
 
 ## 21. Prisoner/visitor LLM exclusion + Layer 1 log naming (2026-11-15)
 
@@ -802,4 +802,4 @@ User noticed "Human####" names in the dev log alongside named colonists, and ask
 
 ### 21.3 Build / test record
 - Product build vs real DLLs: **0 warnings, 0 errors** (first attempt failed CS0117 on `Find.FactionPlayer` — does not exist in 1.6). Harness **260/260** ×2 (3 new checks: prisoner excluded from gate; non-player-faction pawn excluded; snapshot carries display name + stable ThingID key).
-- Deploy PENDING — bundled with the JobOnThing NRE fix (§20.5); game was running. Staged in `Assemblies\`; deploy on close with robocopy + hash verify.
+- **Deployed 2026-11-15** (game closed), same build as §20.5 — SHA256 `19D345EE…` verified live == staged; supersedes the previously deployed work-affordance build `22F6973E…`.

@@ -110,16 +110,15 @@ closed: robocopy `/MIR /XF .gitignore /XD Source Tests`, then hash-verify `6CC1D
 
 ## H. Phase 4 check — AI Mind tab, settings menu, district fallback (~20 min)
 
-Deployed build: DLL SHA256 `22F6973E86CB0F0960CDCCC0376F9E787666B9E6FEBBC46D940E826B3BA2E041` (deployed 2026-11-15
-with the game closed — **work-affordance job resolution**: Layer 1 work options now carry the real Job resolved via
-`WorkGiver_Scanner.JobOnThing` at scan time (decompiled 1.6: pure factory, zero reservation calls; giver list already
-schedule-gated), fixing "pawns don't do what Layer 1 says" — previously every work impulse was offered with a null jobDef
-and silently discarded at re-validation. Supersedes `FF9BDE47…` (drop-gate decomposition + self-targeting guard + NRE fix
-rounds 1–2), which superseded `82691858…`, `305A33E8…`, `4C20CEC1…`, `9F5263E8…`; also bundles the Ollama-ready state
+Deployed build: DLL SHA256 `19D345EE06F0849F9B6078D71FB2FB07760CD2E17EC9B0CE98794D1D19BCBE12` (deployed 2026-11-15
+with the game closed, robocopy + live==staged hash verified — **supersedes `22F6973E…`** and carries everything in it:
+work-affordance job resolution via `WorkGiver_Scanner.JobOnThing` at scan time (TEST-RESULTS.md §20), plus the three
+later fixes: JobOnThing NRE guard (§20.5, ErrorOnce 4813), prisoner/visitor LLM gate + Layer 1 log naming as
+`Name (Human####)` (§21, ErrorOnce 4814). Supersedes `FF9BDE47…` (drop-gate decomposition + self-targeting guard + NRE
+fix rounds 1–2), which superseded `82691858…`, `305A33E8…`, `4C20CEC1…`, `9F5263E8…`; also bundles the Ollama-ready state
 verified in TEST-RESULTS.md §19 (all three layers live on `http://127.0.0.1:11434` qwen2.5:3b, 100% GPU Vulkan). Full
-records in TEST-RESULTS.md §14–§21. **Staged superset (deploy pending game close):** JobOnThing NRE guard
-(TEST-RESULTS.md §20.5) + prisoner/visitor LLM gate + Layer 1 log naming (§21) — hash recorded on deploy. Harness
-**260/260**. Everything in this section is visual/in-game — the harness pins the data mapping, not the pixels.
+records in TEST-RESULTS.md §14–§21. Harness **260/260**. Everything in this section is visual/in-game — the harness
+pins the data mapping, not the pixels.
 
 - [ ] **H1.** **AI Mind tab name + content.** First: the tab button in the bar should read **"AI Mind"** (plain English,
       no garbled characters). Select a colonist who has already acted on an LLM decision (any pawn from a
