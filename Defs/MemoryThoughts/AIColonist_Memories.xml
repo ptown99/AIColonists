@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Defs>
+  <!-- ====================================================================
+       AIColonists Phase 3 — Mood bridge (Spec §7.3 "emotional shift")
+       AI social interactions grant vanilla-style social memory thoughts:
+       long opinion drift + short mood blip via thoughtToMake, the exact
+       pattern vanilla uses for Insulted/InsultedMood and KindWords/KindWordsMood
+       (Data/Core/Defs/ThoughtDefs/Thoughts_Memory_Social.xml). All values are
+       deliberately milder than their vanilla counterparts. Stacking is handled
+       by vanilla machinery (stackLimitForSameOtherPawn, oldest removed).
+       ==================================================================== -->
+
+  <!-- warm_chat: MUTUAL. +4 opinion per instance, up to 4 per pair (~+13.8 max ≈ DeepTalk's flat +15), plus a short mood lift. -->
+  <ThoughtDef>
+    <defName>AIColonist_WarmChatMemory</defName>
+    <showBubble>true</showBubble>
+    <thoughtClass>Thought_MemorySocial</thoughtClass>
+    <durationDays>20</durationDays>
+    <stackLimit>300</stackLimit>
+    <stackLimitForSameOtherPawn>4</stackLimitForSameOtherPawn>
+    <stackedEffectMultiplier>0.9</stackedEffectMultiplier>
+    <developmentalStageFilter>Baby, Child, Adult</developmentalStageFilter>
+    <socialTargetDevelopmentalStageFilter>Baby, Child, Adult</socialTargetDevelopmentalStageFilter>
+    <stages>
+      <li>
+        <label>warm chat</label>
+        <description>We had a warm chat. They seem like good company.</description>
+        <baseOpinionOffset>4</baseOpinionOffset>
+      </li>
+    </stages>
+    <thoughtToMake>AIColonist_WarmChatMood</thoughtToMake>
+  </ThoughtDef>
+
+  <ThoughtDef>
+    <defName>AIColonist_WarmChatMood</defName>
+    <durationDays>2</durationDays>
+    <stackLimit>5</stackLimit>
+    <stackedEffectMultiplier>0.9</stackedEffectMultiplier>
+    <developmentalStageFilter>Baby, Child, Adult</developmentalStageFilter>
+    <nullifyingHediffs>
+      <li MayRequire="Ludeon.RimWorld.Anomaly">Inhumanized</li>
+    </nullifyingHediffs>
+    <stages>
+      <li>
+        <label>warm chat</label>
+        <description>We had a warm chat that put me in a good mood.</description>
+        <baseMoodEffect>3</baseMoodEffect>
+      </li>
+    </stages>
+  </ThoughtDef>
+
+  <!-- vent_frustration: the LISTENER takes a small opinion hit (weaker than Slighted's -5). No mood effect — neutral event. -->
+  <ThoughtDef>
+    <defName>AIColonist_VentFrustrationMemory</defName>
+    <thoughtClass>Thought_MemorySocial</thoughtClass>
+    <durationDays>10</durationDays>
+    <stackLimit>300</stackLimit>
+    <stackLimitForSameOtherPawn>3</stackLimitForSameOtherPawn>
+    <stackedEffectMultiplier>0.9</stackedEffectMultiplier>
+    <developmentalStageFilter>Baby, Child, Adult</developmentalStageFilter>
+    <socialTargetDevelopmentalStageFilter>Baby, Child, Adult</socialTargetDevelopmentalStageFilter>
+    <stages>
+      <li>
+        <label>vented at me</label>
+        <description>They vented their frustrations at me. It's not my fault they're stressed.</description>
+        <baseOpinionOffset>-3</baseOpinionOffset>
+      </li>
+    </stages>
+  </ThoughtDef>
+
+  <!-- sharp_remark: the TARGET takes an opinion hit + short mood blip (milder than Insulted's -15 / -5). -->
+  <ThoughtDef>
+    <defName>AIColonist_SharpRemarkMemory</defName>
+    <thoughtClass>Thought_MemorySocial</thoughtClass>
+    <durationDays>10</durationDays>
+    <stackLimit>300</stackLimit>
+    <stackLimitForSameOtherPawn>3</stackLimitForSameOtherPawn>
+    <stackedEffectMultiplier>0.9</stackedEffectMultiplier>
+    <developmentalStageFilter>Baby, Child, Adult</developmentalStageFilter>
+    <socialTargetDevelopmentalStageFilter>Baby, Child, Adult</socialTargetDevelopmentalStageFilter>
+    <stages>
+      <li>
+        <label>sharp remark</label>
+        <description>They made a sharp remark at me. It stung.</description>
+        <baseOpinionOffset>-6</baseOpinionOffset>
+      </li>
+    </stages>
+    <thoughtToMake>AIColonist_SharpRemarkMood</thoughtToMake>
+  </ThoughtDef>
+
+  <ThoughtDef>
+    <defName>AIColonist_SharpRemarkMood</defName>
+    <durationDays>2</durationDays>
+    <stackLimit>5</stackLimit>
+    <stackedEffectMultiplier>0.9</stackedEffectMultiplier>
+    <developmentalStageFilter>Baby, Child, Adult</developmentalStageFilter>
+    <nullifyingHediffs>
+      <li MayRequire="Ludeon.RimWorld.Anomaly">Inhumanized</li>
+    </nullifyingHediffs>
+    <stages>
+      <li>
+        <label>sharp remark</label>
+        <description>I got a sharp remark from someone and it's still on my mind.</description>
+        <baseMoodEffect>-4</baseMoodEffect>
+      </li>
+    </stages>
+  </ThoughtDef>
+
+</Defs>

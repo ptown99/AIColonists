@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- No-game test harness: compiles the REAL mod sources against GameStubs.cs and runs unit tests. -->
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net5.0</TargetFramework>
+    <LangVersion>9</LangVersion>
+    <AssemblyName>AIColonists.Tests</AssemblyName>
+    <RootNamespace>AIColonists.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Newtonsoft mirrors RimWorld's JsonUtility (Json.NET under the hood) so wire-name tests are faithful. -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Compile-check + unit-test every real mod source file against the stubs.
+         Exclude Source/obj+bin: they hold the MOD's generated AssemblyInfo/AssemblyAttributes, which would
+         duplicate this project's own assembly attributes (CS0579) once the mod has been built once. -->
+    <Compile Include="../Source/**/*.cs" Exclude="../Source/obj/**;../Source/bin/**" />
+  </ItemGroup>
+
+</Project>

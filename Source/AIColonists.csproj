@@ -1,0 +1,69 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Per-machine config (gitignored): copy local.build.props.example → local.build.props and set your RimWorld path. -->
+  <Import Project="local.build.props" Condition="Exists('$(MSBuildThisFileDirectory)local.build.props')" />
+
+  <PropertyGroup>
+    <!-- RimWorld 1.5/1.6 run on .NET Framework 4.7.2 (RimWorld 1.7+ retargets — see README) -->
+    <TargetFramework>net472</TargetFramework>
+    <LangVersion>9</LangVersion>
+    <AssemblyName>AIColonists</AssemblyName>
+    <RootNamespace>AIColonists</RootNamespace>
+
+    <!-- RimWorld loads the DLL from <ModRoot>/Assemblies/ -->
+    <OutputPath>$(MSBuildThisFileDirectory)..\Assemblies\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+
+    <!-- No VS Build Tools needed: pull .NET Framework 4.7.2 reference assemblies from NuGet -->
+    <AutomaticallyUseReferenceAssemblyPackages>true</AutomaticallyUseReferenceAssemblyPackages>
+
+    <!-- RimWorld install root — set via local.build.props (see example) or -p:RimWorldDir="..." on the command line. -->
+    <RimWorldDir Condition="'$(RimWorldDir)' == ''">SET-ME\path\to\RimWorld</RimWorldDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- RimWorld 1.6 merges Verse + RimWorld + game code into ONE Assembly-CSharp.dll
+         (verified on install 1.6.4871 rev590 — no separate Verse.dll/RimWorld.dll). -->
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(RimWorldDir)\RimWorldWin64_Data\Managed\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!-- UnityEngine types our code touches directly (Mathf et al.) -->
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(RimWorldDir)\RimWorldWin64_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!-- Unity 2022.3 module split (verified on this install): GUI/Text live in IMGUIModule, JsonUtility in JSONSerializeModule —
+         neither is in CoreModule. -->
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>$(RimWorldDir)\RimWorldWin64_Data\Managed\UnityEngine.IMGUIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.JSONSerializeModule">
+      <HintPath>$(RimWorldDir)\RimWorldWin64_Data\Managed\UnityEngine.JSONSerializeModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!-- Widgets.ButtonText's optional 'TextAnchor? overrideTextAnchor' parameter forces the compiler to resolve
+         TextAnchor even for 2-arg calls — it lives in TextRenderingModule (verified by CS0012 on first build). -->
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>$(RimWorldDir)\RimWorldWin64_Data\Managed\UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!-- Harmony: the game does NOT bundle it (verified — no Harmony types in Assembly-CSharp.dll),
+         so ship a copy inside the mod at ../0Harmony/0Harmony.dll (standard RimWorld convention).
+         Source: NuGet Lib.Harmony 2.3.3, net472 target. Copied to Assemblies/ on build (<Private>true</Private>). -->
+    <Reference Include="0Harmony">
+      <HintPath>..\0Harmony\0Harmony.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+
+    <!-- .NET Framework 4.7.2: HttpClient lives in System.Net.Http, which SDK-style projects do not reference by default (CS1069). -->
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+
+</Project>

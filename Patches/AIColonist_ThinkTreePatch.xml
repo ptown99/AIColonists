@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Patch>
+  <!--
+    Spec §6.1: Inject the AI desire branch into MainColonistBehaviorCore immediately BEFORE the nested
+    ThinkNode_PrioritySorter that handles autonomous work/joy. That places it below Drafted, QueuedJob
+    (player right-click orders), and emergency survival nodes — so player commands and life-safety always
+    supersede AI desires natively via ThinkTree priority.
+
+    File placement verified on 1.6 against the game's own expansions: patch files live in a top-level Patches/
+    folder with root <Patch> (see Data/Royalty/Patches/*). Files under Defs/ are parsed strictly as def files —
+    an <Operation> child there fails with "Type ... is not a Def type or could not be found".
+    The xpath is verified against Core's own SubTrees_Misc.xml: MainColonistBehaviorCore/thinkRoot/subNodes/li[@Class="ThinkNode_PrioritySorter"].
+  -->
+  <Operation Class="PatchOperationInsert">
+    <xpath>Defs/ThinkTreeDef[defName="MainColonistBehaviorCore"]/thinkRoot/subNodes/li[@Class="ThinkNode_PrioritySorter"]</xpath>
+    <order>Prepend</order>
+    <value>
+      <li Class="AIColonists.ThinkTree.ThinkNode_ConditionalAIColonist">
+        <subNodes>
+          <li Class="AIColonists.ThinkTree.JobGiver_AIColonistDesire" />
+        </subNodes>
+      </li>
+    </value>
+  </Operation>
+</Patch>

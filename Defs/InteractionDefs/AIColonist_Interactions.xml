@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Defs>
+  <!--
+    Spec §7.3: Custom LLM-driven social interactions (Phase 3).
+
+    Natural triggering is suppressed in code, not XML: InteractionWorker_AISocial.RandomSelectionWeight returns 0f, so the
+    vanilla random interaction roll (Pawn_InteractionsTracker.TryInteractRandomly) can never pick these defs. They only fire
+    when a Layer 2 decision explicitly calls pawn.interactions.TryInteractWith(recipient, def) from AIColonistGameComponent.
+
+    1.6 contract (decompiled Pawn_InteractionsTracker.TryInteractWith, verified 2026-11):
+      - intDef.GetSymbol(...) is called UNCONDITIONALLY for every interaction → each def needs a real <symbol> path. We reuse
+        vanilla speech-symbol textures (the same strings Core/Royalty interaction defs use, so 1.6's asset resolution handles
+        them identically — no new art required).
+      - A PlayLogEntry_Interaction is ALWAYS added and its sentence resolves "r_logentry" from logRulesInitiator → each def
+        needs a rule pack, otherwise the play-log/letter sentence degrades to an error fallback.
+      - If our worker returns a non-null letterDef, vanilla composes the letter as <play-log sentence> + "\n\n" +
+        <worker letterText> — i.e., the LLM's spoken_line lands in the letter automatically (InteractionWorker_AISocial).
+
+    Mood bridge (Spec §7.3 "emotional shift", user-approved 2026-11-13): each def references vanilla-style social memory
+    thoughts via <initiatorThought>/<recipientThought>. 1.6 contract (decompiled Pawn_InteractionsTracker.TryInteractWith,
+    verified 2026-11): after a successful interaction, intDef.initiatorThought is granted to the initiator and
+    intDef.recipientThought to the recipient via AddInteractionThought(pawn, otherPawn, thoughtDef) →
+    pawn.needs.mood.thoughts.memories.TryGainMemory(thought_Memory, otherPawn), scaled by the other pawn's SocialImpact.
+    The thoughtToMake chain (mood blips) is handled inside MemoryThoughtHandler.TryGainMemory — all vanilla machinery,
+    zero mod code. Definitions live in Defs/MemoryThoughts/AIColonist_Memories.xml; values are deliberately milder than
+    their vanilla counterparts (KindWords +15 / Slighted -5 / Insulted -15). RelationshipVector updates still come from
+    InteractionTrackerPatches on top of this.
+  -->
+
+  <InteractionDef>
+    <defName>AIColonist_WarmChat</defName>
+    <label>warm chat</label>
+    <workerClass>AIColonists.Social.InteractionWorker_AISocial</workerClass>
+    <symbol>Things/Mote/SpeechSymbols/Chitchat</symbol>
+    <!-- MUTUAL: both pawns gain the opinion memory (+4 each, max 4 per pair) + a 2-day mood lift via thoughtToMake. -->
+    <initiatorThought>AIColonist_WarmChatMemory</initiatorThought>
+    <recipientThought>AIColonist_WarmChatMemory</recipientThought>
+    <logRulesInitiator>
+      <rulesStrings>
+        <li>r_logentry->[INITIATOR_nameDef] and [RECIPIENT_nameDef] shared a warm chat.</li>
+      </rulesStrings>
+    </logRulesInitiator>
+  </InteractionDef>
+
+  <InteractionDef>
+    <defName>AIColonist_VentFrustration</defName>
+    <label>venting frustration</label>
+    <workerClass>AIColonists.Social.InteractionWorker_AISocial</workerClass>
+    <symbol>Things/Mote/SpeechSymbols/Slight</symbol>
+    <!-- LISTENER only: the recipient takes a small opinion hit (-3, weaker than Slighted's -5). No mood effect — neutral event. -->
+    <recipientThought>AIColonist_VentFrustrationMemory</recipientThought>
+    <logRulesInitiator>
+      <rulesStrings>
+        <li>r_logentry->[INITIATOR_nameDef] vented some frustration to [RECIPIENT_nameDef].</li>
+      </rulesStrings>
+    </logRulesInitiator>
+  </InteractionDef>
+
+  <InteractionDef>
+    <defName>AIColonist_SharpRemark</defName>
+    <label>sharp remark</label>
+    <workerClass>AIColonists.Social.InteractionWorker_AISocial</workerClass>
+    <symbol>Things/Mote/SpeechSymbols/Insult</symbol>
+    <!-- TARGET only: the recipient takes an opinion hit (-6) + a 2-day mood blip (-4) via thoughtToMake. Milder than Insulted's -15/-5. -->
+    <recipientThought>AIColonist_SharpRemarkMemory</recipientThought>
+    <logRulesInitiator>
+      <rulesStrings>
+        <li>r_logentry->[INITIATOR_nameDef] made a sharp remark about [RECIPIENT_nameDef].</li>
+      </rulesStrings>
+    </logRulesInitiator>
+  </InteractionDef>
+</Defs>

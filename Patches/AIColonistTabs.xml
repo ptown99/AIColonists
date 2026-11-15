@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Patch>
+  <!-- RimWorld 1.6: pawn inspector tabs come from the ThingDef <inspectorTabs> list, resolved to shared singletons via
+       InspectTabManager.GetSharedInstance (parameterless ctor required). Patches run on the unified PRE-inheritance XML,
+       and Human inherits its tab list from BasePawn without declaring one of its own — so we append a fresh
+       <inspectorTabs> element directly onto the Human def node. XmlInheritance then merges our <li> into the inherited
+       list (appended after ITab_Pawn_Log). No other pawn race is affected. Verified against install 1.6.4871:
+       BasePawn (Data/Core/Defs/ThingDefs_Races/Races_Animal_Base.xml) owns the base tab list; Human
+       (Races_Humanlike.xml) does not override it. -->
+  <!-- Xpath convention verified on 1.6: the unified patch document is RAW XML (no attribute mirroring), so defName — a CHILD
+       element in every def file — must be addressed with a child-element predicate [defName="X"], exactly as the game's own
+       patches do (e.g. Data/Royalty/Patches/Things_Drugs.xml: /Defs/ThingDef[defName="WakeUp"]/description). The attribute-axis
+       form [@defName='X'] matches nothing and fails silently with "Patch operation ... failed" from PatchOperation.Complete(). -->
+  <Operation Class="PatchOperationAdd">
+    <xpath>/Defs/ThingDef[defName="Human"]</xpath>
+    <value>
+      <inspectorTabs>
+        <li>AIColonists.UI.ITab_Pawn_AIMind</li>
+      </inspectorTabs>
+    </value>
+  </Operation>
+</Patch>

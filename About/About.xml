@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ModMetaData>
+  <packageId>jrhh.AIColonists</packageId>
+  <name>AI-Integrated Colonists</name>
+  <author>Amy Hollon</author>
+  <description>
+Makes each colonist an autonomous agent driven by a local LLM — everything runs on your own hardware, nothing leaves your machine. Works with any OpenAI-compatible endpoint: local Ollama (easiest, `ollama pull qwen2.5:3b` + point the settings at http://127.0.0.1:11434) or llama.cpp llama-server on a dedicated GPU box (launch scripts in the mod's server/ folder).
+
+Three-layer design: Layer 1 gives each pawn impulses from sensory-framed perception (what they can actually do right now); Layer 2 simulates shared rooms in one batched call so colonists spontaneously chat, vent, and remark; Layer 3 consolidates memories into self-knowledge, long-term desires, and slow trait drift every few minutes. All LLM work happens on background threads — the main thread only pops pre-validated decisions in under 0.01 ms, so there are zero frame drops even at 50 colonists (district batching keeps large colonies covered).
+
+Inspect any colonist's mind: the AI Mind tab shows their last inner monologue, long-term desire, recent memories, self-knowledge, continuous trait drift bars, and relationship vectors toward the people they know.
+
+Player control is absolute: drafting purges pending desires instantly, manual orders always win, emergencies are handled by vanilla AI, and only player-faction colonists are LLM-eligible (prisoners/visitors never get evaluated). The mod degrades gracefully — with no server reachable it is completely inert.
+
+Mod Settings includes per-layer URLs/model names, dual-clock timing ceilings, and one-click VRAM presets for CPU / single P100 / dual P100 hardware. Harmony is bundled — no other mods required. AI is disabled by default; enable it in Mod Settings once your inference endpoint is up.
+  </description>
+  <supportedVersions>
+    <li>1.6</li>
+  </supportedVersions>
+  <!-- No modDependencies: this mod bundles its own 0Harmony.dll (Lib.Harmony 2.3.3) in Assemblies/,
+       so it is self-contained on a fresh install with no Workshop mods enabled. -->
+</ModMetaData>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- RimWorld 1.6 loads keyed translations from the Languages/<lang>/Keyed/ FOLDER (Verse.LoadedLanguage:
+     GetDirectory("Keyed").GetFiles("*.xml")) — a file named Keyed.xml at the Languages/<lang>/ level is never read.
+     While this key was missing, DevMode users saw PseudoTranslated() garble on the tab button (Translator.Translate
+     falls back to pseudo-translation for unresolved keys when Prefs.DevMode is on). -->
+<LanguageData>
+
+  <!-- ITab_Pawn_AIMind.labelKey -->
+  <TabAIMind>AI Mind</TabAIMind>
+
+</LanguageData>
