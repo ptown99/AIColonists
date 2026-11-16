@@ -234,6 +234,8 @@ namespace Verse
         public static TickManager TickManager = new TickManager();
         // [CONFIRMED decompiled 2026-11-15] 1.6 Find has NO FactionPlayer member — the player faction is
         // RimWorld.Faction.OfPlayer (see MapPawns.FreeColonists => FreeHumanlikesOfFaction(Faction.OfPlayer)).
+        // [CONFIRMED decompiled 2026-11-15] 1.6 Find.CurrentMap property → Verse.Map (null in world view). Stub: field, default null.
+        public static Map CurrentMap;
     }
 
     // --- geometry -------------------------------------------------------------------
@@ -340,6 +342,10 @@ namespace Verse
         public LocalTargetInfo targetA;
         public LocalTargetInfo targetB;
 
+        // [CONFIRMED decompiled 2026-11-15] 1.6 has a Job(JobDef) ctor (the AI hold job uses `new Job(JobDefOf.Wait)`).
+        public Job() { }
+        public Job(JobDef jobDef) { def = jobDef; }
+
         public LocalTargetInfo GetTarget(Verse.AI.TargetIndex i) =>
             i == Verse.AI.TargetIndex.A ? targetA : (i == Verse.AI.TargetIndex.B ? targetB : default(LocalTargetInfo));
     }
@@ -355,8 +361,12 @@ namespace Verse
     // --- pawns ------------------------------------------------------------------------------
     // [CONFIRMED] Need.CurLevelPercentage is the standard need-level accessor.
     public class Need { public float CurLevelPercentage = 1f; }
-    // [CONFIRMED] 1.6: Pawn_NeedsTracker exposes mood/food/rest as PUBLIC FIELDS of type RimWorld.Need (reflection probe).
-    public class Pawn_NeedsTracker { public Need mood = new Need(); public Need food = new Need(); public Need rest = new Need(); }
+    // [CONFIRMED decompiled 2026-11-15] 1.6: Pawn_NeedsTracker.mood is a PUBLIC FIELD of type RimWorld.Need_Mood (a Need
+    // subclass carrying the thought handler); food/rest are plain Needs.
+    public class Pawn_NeedsTracker { public RimWorld.Need_Mood mood = new RimWorld.Need_Mood(); public Need food = new Need(); public Need rest = new Need(); }
+
+    // [CONFIRMED decompiled 2026-11-15] 1.6 Verse.Pawn_AgeTracker.AgeBiologicalYears is a public int property (stub: field).
+    public class Pawn_AgeTracker { public int AgeBiologicalYears = 30; }
 
     // [CONFIRMED] 1.6: HediffSet.PainTotal (public float, cached — DirtyPainCache()). PainLevel does NOT exist.
     public class HediffSet { public float PainTotal; }
@@ -405,6 +415,12 @@ namespace Verse
         // [CONFIRMED decompiled 2026-11-15] Pawn.IsPrisoner is a public (guest-tracker-based) property — the stub keeps a plain field.
         public bool IsPrisoner;
         public Pawn_NeedsTracker needs = new Pawn_NeedsTracker();
+        // [CONFIRMED decompiled 2026-11-15] 1.6 Verse.Pawn: public fields ageTracker (Pawn_AgeTracker), story
+        // (RimWorld.Pawn_StoryTracker — carries the TraitSet), skills (RimWorld.Pawn_SkillTracker) — the Phase 2
+        // identity-capture surface (Spec §7.1).
+        public Pawn_AgeTracker ageTracker = new Pawn_AgeTracker();
+        public RimWorld.Pawn_StoryTracker story = new RimWorld.Pawn_StoryTracker();
+        public RimWorld.Pawn_SkillTracker skills = new RimWorld.Pawn_SkillTracker();
         public Pawn_HealthTracker health = new Pawn_HealthTracker();
         public Pawn_RaceProps RaceProps = new Pawn_RaceProps();
         public RimWorld.Faction Faction = new RimWorld.Faction();
@@ -426,6 +442,9 @@ namespace Verse
     public class Map
     {
         public MapPawns mapPawns = new MapPawns();
+        // [CONFIRMED decompiled 2026-11-15] 1.6: Map.Parent → WorldObject (info.parent); colony name =
+        // (Find.CurrentMap?.Parent as RimWorld.Planet.Settlement)?.Name. Stub: field, default null (no settlement).
+        public RimWorld.Planet.WorldObject Parent;
         private readonly List<MapComponent> components = new List<MapComponent>();
         public void RegisterForTests(MapComponent c) => components.Add(c);
 
@@ -597,6 +616,11 @@ namespace RimWorld.Planet
         protected WorldComponent(World world) { }
         public virtual void ExposeData() { }
     }
+
+    // [CONFIRMED decompiled 2026-11-15] 1.6: Settlement : MapParent (a WorldObject) with a public string Name field —
+    // the colony's settlement name for the identity prefix (Spec §7.1).
+    public class WorldObject { }
+    public class Settlement : WorldObject { public string Name; }
 }
 
 namespace RimWorld
@@ -607,6 +631,35 @@ namespace RimWorld
     {
         public bool IsPlayer = true;
         public static readonly Faction OfPlayer = new Faction { IsPlayer = true };
+    }
+
+    // [CONFIRMED decompiled 2026-11-15] 1.6: TraitSet.allTraits is a PUBLIC List<Trait> FIELD; Trait exposes LabelCap
+    // (computed), Degree (int) and Suppressed (bool) — the identity-prefix trait line + weight-seeding source.
+    public class Trait { public string LabelCap = "stub trait"; public int Degree; public bool Suppressed; }
+    public class TraitSet { public List<Trait> allTraits = new List<Trait>(); }
+
+    // [CONFIRMED decompiled 2026-11-15] 1.6: the TraitSet lives on the STORY TRACKER — `public TraitSet traits` field on
+    // RimWorld.Pawn_StoryTracker (Verse.Pawn has NO direct traits field; vanilla code reads story?.traits.allTraits).
+    public class Pawn_StoryTracker { public TraitSet traits = new TraitSet(); }
+
+    // [CONFIRMED decompiled 2026-11-15] 1.6: Pawn_SkillTracker.skills is a PUBLIC List<SkillRecord> FIELD + GetSkill(SkillDef);
+    // SkillRecord carries public def (SkillDef) + levelInt (int). SkillDefOf fields include Intellectual (the learning-system
+    // stat — there is NO "Intellect" field in 1.6; verified against the real DLL's field listing).
+    public class SkillDef { public string label = "stub skill"; }
+    public static class SkillDefOf
+    {
+        public static readonly SkillDef Intellectual = new SkillDef { label = "intellectual" };
+    }
+    public class SkillRecord { public SkillDef def; public int levelInt; }
+    public class Pawn_SkillTracker
+    {
+        public List<SkillRecord> skills = new List<SkillRecord>();
+        // Real GetSkill ADDS a record for missing defs (def-DB driven); the stub returns null — the mod null-guards it.
+        public SkillRecord GetSkill(SkillDef skillDef)
+        {
+            foreach (var r in skills) if (r != null && r.def == skillDef) return r;
+            return null;
+        }
     }
 
     // [CONFIRMED] 1.6: all *DefOf classes live in the RimWorld namespace. Ingest/Wait/LayDown verified on
@@ -707,13 +760,31 @@ namespace RimWorld
             }
         }
     }
-    public class Thought_Memory { public ThoughtDef def = new ThoughtDef(); }
+    // [CONFIRMED decompiled 2026-11-15] 1.6 Thought_Memory: PUBLIC FIELDS moodOffset (int) + otherPawn (Pawn); LabelCap is a
+    // COMPUTED property formatted against the def stages + otherPawn — can throw on half-loaded data (ErrorOnce 4814 precedent).
+    public class Thought_Memory
+    {
+        public ThoughtDef def = new ThoughtDef();
+        public int moodOffset;
+        public Verse.Pawn otherPawn;
+        private string labelCapInt = "stub thought";
+        public virtual string LabelCap { get { return labelCapInt; } set { labelCapInt = value; } } // stub: settable for tests (real: computed)
+    }
+
+    // [CONFIRMED decompiled 2026-11-15] 1.6: Need_Mood : Need_Seeker carries a PUBLIC `thoughts` FIELD of type ThoughtHandler,
+    // which holds a PUBLIC `memories` FIELD of type MemoryThoughtHandler (both initialized in the real ctor).
+    public class ThoughtHandler { public MemoryThoughtHandler memories = new MemoryThoughtHandler(); }
+    public class Need_Mood : Verse.Need { public ThoughtHandler thoughts = new ThoughtHandler(); }
 
     // [CONFIRMED] 1.6: MemoryThoughtHandler.TryGainMemory has TWO overloads ((ThoughtDef,Pawn,Precept) and
     // (Thought_Memory,Pawn)); the mod pins the latter via HarmonyPatch parameter types. Instance method.
     public class MemoryThoughtHandler
     {
         public Verse.Pawn pawn; // [CONFIRMED] public field in 1.6 (decompiled); the patch keys on this, not otherPawn
+
+        // [CONFIRMED decompiled 2026-11-15] 1.6: Memories is a COMPUTED property over the private list — stub: public field
+        // with the same name so `thoughts.memories.Memories` compiles identically.
+        public List<Thought_Memory> Memories = new List<Thought_Memory>();
 
         public bool TryGainMemory(Thought_Memory thought, Verse.Pawn pawn) => false;
     }

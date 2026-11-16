@@ -18,7 +18,7 @@ namespace AIColonists.Core
             public float topP;
         }
 
-        // Spec §3.2 MOOD_ENTROPY_MAP (keyed by mood tier — TODO(Phase 2): derive tier from pawn.needs.mood).
+        // Spec §3.2 MOOD_ENTROPY_MAP, keyed by mood tier.
         private static readonly System.Collections.Generic.Dictionary<string, MoodParams> Table =
             new System.Collections.Generic.Dictionary<string, MoodParams>
         {
@@ -30,31 +30,60 @@ namespace AIColonists.Core
             { "depressed",  new MoodParams { tempOffset = -0.15f, topP = 0.80f } }, // flat, repetitive, low-energy (min 0.50 after clamp)
         };
 
-        /// <summary>TODO(Phase 2): map pawn.needs.mood.CurLevel (+ mental state) to a tier key.</summary>
-        public static string MoodTier(Pawn pawn)
+        /// <summary>
+        /// Phase 2 (Spec §3.2): map a mood percentage (0..1, from pawn.needs.mood.CurLevelPercentage) to a tier key.
+        /// Bands mirror the vanilla mood curve: comfortable above ~0.6, strained mid-range, and the two low-mood poles —
+        /// flat/depressed just below break threshold, impulsive/furious near the horrible-break zone where vanilla
+        /// colonists actually go berserk (so "furious" = erratic sampling there is behaviorally faithful).
+        /// Values outside 0..1 (unknown mood) fall back to the neutral "content" baseline.
+        /// </summary>
+        public static string MoodTier(float moodPct)
         {
-            // Placeholder: treat everything as content until the real mood-tier mapping lands in Phase 2.
-            return "content";
+            if (moodPct < 0f || moodPct > 1f) return "content";
+            if (moodPct >= 0.75f) return "ecstatic";
+            if (moodPct >= 0.60f) return "happy";
+            if (moodPct >= 0.45f) return "content";
+            if (moodPct >= 0.30f) return "stressed";
+            if (moodPct >= 0.15f) return "depressed";
+            return "furious";
         }
 
-        public static float MoodToTemperature(float baseTemp, Pawn pawn = null)
+        /// <summary>Main-thread convenience: tier from the pawn's mood need (null-safe — some pawns have no mood need).</summary>
+        public static string MoodTier(Pawn pawn)
         {
-            // Fallback is the "content" baseline (Spec §3.2); assigned up-front because C# definite-assignment
-            // requires it when pawn == null skips the lookup entirely.
-            MoodParams p = Table["content"];
-            if (pawn != null && !Table.TryGetValue(MoodTier(pawn), out p))
-                p = Table["content"];
+            if (pawn == null || pawn.needs == null || pawn.needs.mood == null) return "content";
+            try { return MoodTier(pawn.needs.mood.CurLevelPercentage); }
+            catch { return "content"; } // defensive rule — a throwing mood read must never break the caller
+        }
 
-            float t = baseTemp + p.tempOffset;
+        private static MoodParams ParamsFor(string tier)
+        {
+            MoodParams p;
+            if (!Table.TryGetValue(tier, out p))
+                p = Table["content"]; // defensive — every tier key the mappers emit is in the table
+            return p;
+        }
+
+        /// <summary>Background-thread path (Phase 2): the dispatch worker only sees the snapshot, so it passes the
+        /// mood percentage captured on the main thread. Clamped to [TempFloor, TempCeiling] per Spec §3.2.</summary>
+        public static float MoodToTemperature(float baseTemp, float moodPct)
+        {
+            float t = baseTemp + ParamsFor(MoodTier(moodPct)).tempOffset;
             return UnityEngine.Mathf.Clamp(t, TempFloor, TempCeiling);
         }
 
-        public static float MoodToTopP(Pawn pawn = null)
+        /// <summary>Legacy main-thread overload (kept for the harness and any future pawn-side callers). A null pawn is an
+        /// UNKNOWN mood — the content baseline applies, exactly as pre-Phase 2 (the "content" tier offset, then clamp).</summary>
+        public static float MoodToTemperature(float baseTemp, Pawn pawn = null)
         {
-            MoodParams p = Table["content"];
-            if (pawn != null && !Table.TryGetValue(MoodTier(pawn), out p))
-                p = Table["content"];
-            return p.topP;
+            string tier = pawn == null ? "content" : MoodTier(pawn);
+            return UnityEngine.Mathf.Clamp(baseTemp + ParamsFor(tier).tempOffset, TempFloor, TempCeiling);
         }
+
+        /// <summary>Background-thread path: mood-mapped top_p (Spec §3.2 MOOD_ENTROPY_MAP).</summary>
+        public static float MoodToTopP(float moodPct) => ParamsFor(MoodTier(moodPct)).topP;
+
+        /// <summary>Legacy main-thread overload (kept for the harness and any future pawn-side callers).</summary>
+        public static float MoodToTopP(Pawn pawn = null) => ParamsFor(pawn == null ? "content" : MoodTier(pawn)).topP;
     }
 }

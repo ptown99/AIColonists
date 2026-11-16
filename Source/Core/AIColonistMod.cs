@@ -64,6 +64,12 @@ namespace AIColonists.Core
             Widgets.CheckboxLabeled(new Rect(r.x + 10f, y, r.width - 20f, rowH), "Enable AI (master switch — off means the mod is inert)", ref s.EnableAI);
             y += rowH + 8f;
 
+            // Phase 2 (backlog #8): AI-first job priority. ON (default) — while an LLM decision is in flight the pawn
+            // holds position instead of letting the vanilla sorter below issue work first. Player orders, drafting and
+            // emergency survival still win natively; an exhausted pawn (rest < 0.1) is never held.
+            Widgets.CheckboxLabeled(new Rect(r.x + 10f, y, r.width - 20f, rowH), "AI-first job priority — colonists wait for the LLM's decision instead of falling back to vanilla work first (off = blend mode)", ref s.AIFirstJobPriority);
+            y += rowH + 8f;
+
             Widgets.Label(new Rect(r.x + 10f, y, 300f, rowH), "Layer 1 server URL");
             string url = Widgets.TextField(new Rect(r.x + 320f, y, r.width - 340f, rowH), s.Layer1ServerUrl);
             if (!string.IsNullOrEmpty(url) && url != s.Layer1ServerUrl)

@@ -110,15 +110,22 @@ closed: robocopy `/MIR /XF .gitignore /XD Source Tests`, then hash-verify `6CC1D
 
 ## H. Phase 4 check — AI Mind tab, settings menu, district fallback (~20 min)
 
-Deployed build: DLL SHA256 `19D345EE06F0849F9B6078D71FB2FB07760CD2E17EC9B0CE98794D1D19BCBE12` (deployed 2026-11-15
-with the game closed, robocopy + live==staged hash verified — **supersedes `22F6973E…`** and carries everything in it:
-work-affordance job resolution via `WorkGiver_Scanner.JobOnThing` at scan time (TEST-RESULTS.md §20), plus the three
-later fixes: JobOnThing NRE guard (§20.5, ErrorOnce 4813), prisoner/visitor LLM gate + Layer 1 log naming as
-`Name (Human####)` (§21, ErrorOnce 4814). Supersedes `FF9BDE47…` (drop-gate decomposition + self-targeting guard + NRE
-fix rounds 1–2), which superseded `82691858…`, `305A33E8…`, `4C20CEC1…`, `9F5263E8…`; also bundles the Ollama-ready state
+Deployed build: DLL SHA256 `48049F1E3E87B4BE53FCBF977761CA9A2B33ACF38061C0F334E340F924BF58BF` (deployed 2026-11-15
+~22:09 with the game closed, robocopy + live==staged hash verified — **supersedes `19D345EE…`** and carries everything in
+it: work-affordance job resolution (§20), JobOnThing NRE guard (§20.5, ErrorOnce 4813), prisoner/visitor LLM gate + Layer 1
+log naming as `Name (Human####)` (§21, ErrorOnce 4814) — plus the new **Phase 2 completion + AI-first job priority**
+(TEST-RESULTS.md §22, ErrorOnce 4815). Supersedes `FF9BDE47…` (drop-gate decomposition + self-targeting guard + NRE fix
+rounds 1–2), which superseded `82691858…`, `305A33E8…`, `4C20CEC1…`, `9F5263E8…`; also bundles the Ollama-ready state
 verified in TEST-RESULTS.md §19 (all three layers live on `http://127.0.0.1:11434` qwen2.5:3b, 100% GPU Vulkan). Full
-records in TEST-RESULTS.md §14–§21. Harness **260/260**. Everything in this section is visual/in-game — the harness
+records in TEST-RESULTS.md §14–§22. Harness **305/305**. Everything in this section is visual/in-game — the harness
 pins the data mapping, not the pixels.
+
+**What changed for your eyes (Phase 2 + AI-first, §22):** with *AI-first job priority* ON (default), a colonist whose
+LLM decision is still in flight will **stand still for up to ~7.5 s** instead of immediately grabbing vanilla work — that
+hold is the fix for "Layer 1 says X, pawn does Y"; expect work impulses (mine/haul/build/tend) to actually execute now
+(re-test T4). If the server fails twice in a row per pawn, holds stop and vanilla takes over until a dispatch succeeds.
+Prompts also changed: each colonist now has a real identity prefix (name/age/colony/traits/skills/memories) and mood
+shifts sampling temperature — visible as more/less varied inner voices at low mood.
 
 - [ ] **H1.** **AI Mind tab name + content.** First: the tab button in the bar should read **"AI Mind"** (plain English,
       no garbled characters). Select a colonist who has already acted on an LLM decision (any pawn from a
@@ -165,7 +172,7 @@ pins the data mapping, not the pixels.
       first post-unpause tick; that is benign by design, but we want your observation on hand).
 
 ---
-## Status: Phase 1 — PASS (2026-11-12) · Phase 3 + mood bridge — COMPLETE (2026-11-13): interaction execution live-verified (G7), mood bridge confirmed in Mood tab + pawn log (G3; G4 partial — warm-chat side only) · **Phase 4 — DEPLOYED (2026-11-14 ~14:05, build `FF9BDE47…`, + drop-gate decomposition logging): harness 252/252; H1/H2 PASS (user); H3 partial (preset buttons confirmed on UI side by user; cfg-write + served-model proof still pending); H4 re-test done twice — night: Layer 2 fired for the first time, all dispatches `[dropped]` on proximity; morning (clustered 4 pawns in a small room ~10:42, unpaused ~10:44): 5 Layer 2 decisions in ~2 min (3 `[dropped]`, 2 self-targeting `[attempt failed]` — the LLM returned the initiator's own name; safe failure, fix pending), then silence BY DESIGN: pawns scattered to jobs → no shared space with 2+ undrafted colonists → no dispatch (the 90 s clock only advances on actual dispatch), and quiet impulses (`none`/`quiet_nod`/`avoid_gaze`) log nothing by design; zero Ingest NREs, zero `dispatch failed`; awaiting one `[executed]` or acceptance of partial pass; save-load NRE: round 1 (LabelCap) deployed ~01:56, **round 2 (`ThoughtDef.Label` computed-property NRE — `stages[0]` NULL mid-load) found + fixed + bundled into `82691858…` with the self-targeting guard (consume-side drop for ALL impulse types + "never yourself" prompt rule) — CONFIRMED LIVE 13:37 session: save load clean, zero NRE lines**; H4 afternoon re-test: 8 `[dropped]` pre-cluster, then 3×3-room cluster test ongoing; drop-gate decomposition (`FF9BDE47…`) will attribute each remaining drop; H5 open**
+## Status: Phase 1 — PASS (2026-11-12) · Phase 3 + mood bridge — COMPLETE (2026-11-13): interaction execution live-verified (G7), mood bridge confirmed in Mood tab + pawn log (G3; G4 partial — warm-chat side only) · **Phase 4 — DEPLOYED (2026-11-14 ~14:05, build `FF9BDE47…`, + drop-gate decomposition logging): harness 252/252; H1/H2 PASS (user); H3 partial (preset buttons confirmed on UI side by user; cfg-write + served-model proof still pending); H4 re-test done twice — night: Layer 2 fired for the first time, all dispatches `[dropped]` on proximity; morning (clustered 4 pawns in a small room ~10:42, unpaused ~10:44): 5 Layer 2 decisions in ~2 min (3 `[dropped]`, 2 self-targeting `[attempt failed]` — the LLM returned the initiator's own name; safe failure, fix pending), then silence BY DESIGN: pawns scattered to jobs → no shared space with 2+ undrafted colonists → no dispatch (the 90 s clock only advances on actual dispatch), and quiet impulses (`none`/`quiet_nod`/`avoid_gaze`) log nothing by design; zero Ingest NREs, zero `dispatch failed`; awaiting one `[executed]` or acceptance of partial pass; save-load NRE: round 1 (LabelCap) deployed ~01:56, **round 2 (`ThoughtDef.Label` computed-property NRE — `stages[0]` NULL mid-load) found + fixed + bundled into `82691858…` with the self-targeting guard (consume-side drop for ALL impulse types + "never yourself" prompt rule) — CONFIRMED LIVE 13:37 session: save load clean, zero NRE lines**; H4 afternoon re-test: 8 `[dropped]` pre-cluster, then 3×3-room cluster test ongoing; drop-gate decomposition (`FF9BDE47…`) will attribute each remaining drop; H5 open · **Phase 2 + AI-first job priority — DEPLOYED (2026-11-15 ~22:09, build `48049F1E…`, harness 305/305, TEST-RESULTS.md §22): real per-pawn identity prefix (KV-cache byte-stable), Intellect→cadence/horizon, Mood→entropy at dispatch, trait-weight seeding + drift-fed values/fears, hold-job AI-first priority with circuit breakers — open item: live re-test that work impulses now execute (T4)**
 
 All A–D items verified live against RimWorld 1.6.4871 with the Nov 9 llama.cpp build on CPU, including visual
 confirmation of the thought bubble (D5). Full findings, root causes (JsonUtility dead end, object-form `json_schema`,

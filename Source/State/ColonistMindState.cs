@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using AIColonists.Inference;
+using RimWorld; // TraitSet / Trait — the trait-weight seeding source (pawn.story.traits.allTraits)
 using Verse;
 
 namespace AIColonists.State
@@ -60,6 +61,40 @@ namespace AIColonists.State
             var fresh = new RelationshipVector { targetPawnId = targetPawnId };
             relationships.Add(fresh);
             return fresh;
+        }
+
+        /// <summary>READ-ONLY lookup (Phase 2 relational framing): null when no vector exists yet — unlike
+        /// GetOrCreateRelationship, this never plants a default-valued vector as a side effect.</summary>
+        public RelationshipVector GetRelationship(string targetPawnId)
+        {
+            if (string.IsNullOrEmpty(targetPawnId)) return null;
+            foreach (RelationshipVector rv in relationships)
+                if (rv != null && rv.targetPawnId == targetPawnId) return rv;
+            return null;
+        }
+
+        /// <summary>Phase 2 differentiation (Spec §4.1 layer 2): seed the continuous trait weights from the pawn's vanilla
+        /// traits so two pawns with the same trait still differ by degree, and the identity prefix has real material.
+        /// Keyed by lower-cased trait label; weight = 0.5 + 0.15·degree clamped to [0.05, 0.95]. Idempotent — only called
+        /// while the map is empty (fresh state or pre-Phase-2 save), so Layer 3 drift never gets overwritten.</summary>
+        public static void SeedTraitWeightsFromPawn(ColonistMindState mind, Pawn pawn)
+        {
+            if (mind == null || pawn == null || mind.traitWeights.Count != 0) return;
+            try
+            {
+                // [CONFIRMED decompiled 2026-11-15] 1.6: TraitSet lives on the story tracker — pawn.story.traits.allTraits.
+                var all = pawn.story?.traits?.allTraits;
+                if (all == null) return;
+                foreach (Trait t in all)
+                {
+                    if (t == null || t.Suppressed) continue;
+                    string key = t.LabelCap.ToLower();
+                    if (string.IsNullOrEmpty(key)) continue;
+                    float w = 0.5f + 0.15f * t.Degree;
+                    mind.traitWeights[key] = UnityEngine.Mathf.Clamp(w, 0.05f, 0.95f);
+                }
+            }
+            catch { /* half-loaded pawn — the lazy re-seed on a later snapshot capture will pick it up */ }
         }
 
         /// <summary>

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using AIColonists.Core;
 using AIColonists.Prompts;
 using RimWorld;
 using Verse;
@@ -160,7 +161,10 @@ namespace AIColonists.ThinkTree
                     options.Add(new AffordanceOption
                     {
                         optionId = options.Count + 1,
-                        sensoryDescription = "Work on the " + LabelLower(t) + " nearby.",
+                        // Phase 2 (Spec §5.1.3): verb-matched sensory description — "Mine the exposed steel vein" reads as a
+                        // different impulse than "Haul the wooden box to storage", which is what lets the LLM (and the player,
+                        // reading the log) tell the choices apart. Mapped by giver class name (no def access needed).
+                        sensoryDescription = WorkPhrase(scanner, t),
                         jobDef = job.def,
                         // Use the job's own targets when they carry a Thing (faithful to what vanilla would start); fall back
                         // to the scanned thing so IsValidAndReservable's HasThing/Destroyed/reachability re-check always has one.
@@ -173,7 +177,20 @@ namespace AIColonists.ThinkTree
 
         private static void AddSocialAffordances(Pawn pawn, List<AffordanceOption> options)
         {
-            foreach (Pawn other in pawn.Map.mapPawns.AllPawnsSpawned) // TODO(Phase 2): narrow to friendly colonists only
+            // Phase 2 (Spec §4.2): relational framing — the mind state colors each option ("you two have been getting along").
+            // Read-only lookup; a missing world component degrades to plain phrasing, never a crash.
+            AIColonists.State.ColonistMindState mind = null;
+            try
+            {
+                if (Find.World != null)
+                {
+                    AIColonistWorldComponent world = Find.World.GetComponent<AIColonistWorldComponent>();
+                    if (world != null) mind = world.GetOrCreateMindState(pawn);
+                }
+            }
+            catch { /* defensive rule — framing is flavor, a throw here must not kill the scan */ }
+
+            foreach (Pawn other in pawn.Map.mapPawns.AllPawnsSpawned) // friendly colonists only (Faction.IsPlayer gate below)
             {
                 if (other == pawn || options.Count >= MaxOptions) continue;
                 if (!other.RaceProps.Humanlike || !other.Faction.IsPlayer) continue;
@@ -181,10 +198,20 @@ namespace AIColonists.ThinkTree
                 if ((other.Position - pawn.Position).LengthHorizontal > 15f) continue;
                 if (!GenSight.LineOfSight(pawn.Position, other.Position, pawn.Map)) continue;
 
+                string name = other.LabelCap.ToLower();
+                string color = "";
+                var rv = mind != null ? mind.GetRelationship(other.ThingID) : null;
+                if (rv != null)
+                {
+                    // Same above-defaults thresholds as the snapshot's nearby framing — a fresh vector stays uncolored.
+                    if (rv.affection >= 0.6f && rv.trust >= 0.6f) color = " — you two have been getting along well";
+                    else if (rv.frustration >= 0.35f || rv.affection <= 0.4f) color = " — there's some friction between you";
+                }
+
                 options.Add(new AffordanceOption
                 {
                     optionId = options.Count + 1,
-                    sensoryDescription = "Go talk to " + other.LabelCap.ToLower() + ".", // TODO(Phase 2): relational framing from RelationshipVector (Spec §4.2)
+                    sensoryDescription = "Go talk to " + name + color + ".", // Phase 2: relational framing from RelationshipVector (Spec §4.2)
                     jobDef = JobDefOf.Wait, // 1.6 verified: there is NO Talk job def — vanilla talking is an InteractionDef, not a job. Skeleton: wait at the other pawn's cell until Phase 3 swaps in the LLM-driven InteractionDef (Spec §7.3).
                     targetA = new LocalTargetInfo(other),
                 });
@@ -193,5 +220,21 @@ namespace AIColonists.ThinkTree
 
         // 1.6 verified: Def.labelLower was removed — Def exposes `public string label` + TaggedString LabelCap.
         private static string LabelLower(Thing thing) => thing.def.label.ToLower();
+
+        /// <summary>Phase 2 (Spec §5.1.3): verb-matched work phrasing by giver class name. The class-name match is deliberate —
+        /// it needs no def access (safe on half-loaded pawns) and vanilla's WorkGiver_* naming is stable across 1.x.</summary>
+        private static string WorkPhrase(WorkGiver_Scanner scanner, Thing t)
+        {
+            string cls = scanner.GetType().Name; // e.g. "WorkGiver_Mine"
+            string what = LabelLower(t);
+
+            if (cls.Contains("Mine")) return "Mine the " + what + " nearby.";
+            if (cls.Contains("Haul")) return "Haul the " + what + " to storage.";
+            if (cls.Contains("Clean")) return "Clean up the " + what + ".";
+            if (cls.Contains("Construct") || cls.Contains("Repair")) return "Build or repair the " + what + " nearby.";
+            if (cls.Contains("Plant") || cls.Contains("Harvest") || cls.Contains("Cut")) return "Tend the " + what + " nearby.";
+            if (cls.Contains("Slaughter")) return "Slaughter the " + what + ".";
+            return "Work on the " + what + " nearby."; // unknown giver — the Phase 1 phrasing, still valid
+        }
     }
 }

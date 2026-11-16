@@ -103,7 +103,7 @@ note Layer 1 (impulse → job) currently has NO in-game trace at all and is the 
   What remains is the in-game `PlayLogSectionDef` chronicle (distinguishability for players, Layer 1 included).
 - **Effort:** small; one deploy cycle.
 
-## 8. AI-first job priority — suppress/reorder vanilla JobGivers when AI is enabled
+## 8. AI-first job priority — suppress/reorder vanilla JobGivers when AI is enabled ✅ IMPLEMENTED 2026-11-15 (deploy pending)
 
 Stated by the user as the end goal (2026-11-13): "disable much of the vanilla decisions to prioritize the llm, but
 that will depend on performance." Today AI desires enter the think tree *alongside* vanilla givers and can lose the
@@ -112,11 +112,13 @@ as a stopgap). True priority means reordering/suppressing vanilla JobGivers (`Jo
 work givers) behind `JobGiver_AIColonistDesire` while the pawn has a fresh AI desire, or gating them while an AI
 decision is in flight.
 
-- **Why parked:** performance-dependent (user's words). Every suppressed vanilla path changes colony behavior
-  broadly; needs a careful decompile pass + live A/B before touching. The §11.7 freshness check removes the most
-  visible symptom without changing job priority at all.
-- **Effort:** medium–high — think-tree patching or per-giver `CanStartJob` postfixes, a settings toggle, extensive
-  live testing.
+- **Resolved 2026-11-15 (TEST-RESULTS.md §22) — without any vanilla suppression.** Live diagnosis showed our branch
+  already sits ABOVE the work/food/rest sorter; the problem was that `TryGiveJob` returned null while a decision was
+  in flight, letting the sorter below issue a job first. The fix is a short `JobDefOf.Wait` **hold job** (450 ticks)
+  issued while a Layer 1 request is in flight and the pipeline is healthy, with circuit breakers (2 consecutive
+  dispatch failures → vanilla; 3 stale drops → one vanilla cycle; rest < 0.1 never held). New setting
+  `AIFirstJobPriority` (default ON; OFF = blend mode). Player orders/drafting/emergency still win natively — no
+  Harmony patches on vanilla givers, so the performance risk that parked this item is gone.
 
 ## 9. LLM exclusion for non-colonists (prisoners/visitors) ✅ IMPLEMENTED 2026-11-15 (deploy pending)
 

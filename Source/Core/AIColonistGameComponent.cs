@@ -44,6 +44,11 @@ namespace AIColonists.Core
         private const float StaggerSecondsPerColonist = 30f; // Spec §8.2: Layer 3 consolidation stagger
         private const int DecisionStalenessTicks = 3600;     // ~1 in-game hour — stale LLM decisions are dropped at consume time
 
+        // Phase 2 (backlog #8, AI-first job priority): hold-job tuning. HoldPollTicks ≈ 7.5 s at 1× speed — long enough
+        // to cover the full dispatch budget (3000 ms timeout + 500 ms retry delay + one retried send) so a healthy
+        // response always lands before the pawn re-thinks; short enough that an emergency interrupt feels immediate.
+        public const int HoldPollTicks = 450;
+
         private ILlamaBridge bridge;
 
         // Self-targeting guard (live-observed 2026-11-14): log the first dropped self-decision once, then stay quiet.
@@ -59,6 +64,13 @@ namespace AIColonists.Core
             public int lastLayer1Tick;
             public float lastLayer1RealSeconds;
             public bool layer1InFlight;
+
+            // Phase 2 (backlog #8, AI-first job priority): circuit breakers for the hold behavior. consecutiveL1Failures
+            // counts dispatches that produced no usable desire (server error / timeout / unparseable) in a row — at 2,
+            // holds stop and vanilla works until a dispatch succeeds again. staleDrops counts desires discarded at consume
+            // time (target moved on) in a row — at 3, one full cycle goes to vanilla before holds resume.
+            public int consecutiveL1Failures;
+            public int staleDrops;
 
             // Phase 3: per-pawn Layer 3 consolidation cadence (Spec §7.4). The stagger itself is positional —
             // index * StaggerSecondsPerColonist in MaybeDispatchLayer3 — not stored state.
@@ -126,6 +138,68 @@ namespace AIColonists.Core
             Task.Run(async () => await DispatchLayer1(snapshot));
         }
 
+        // ================================================================ Phase 2: AI-first job priority (backlog #8)
+
+        /// <summary>
+        /// Phase 2 (backlog #8 — user end goal: "disable much of the vanilla decisions to prioritize the llm"): true while
+        /// a Layer 1 decision is in flight and the pipeline is healthy enough to be worth waiting for. The JobGiver then
+        /// holds the pawn with a short wait job instead of returning null — returning null would let the vanilla sorter
+        /// BELOW our branch (GetFood/GetRest/Work) issue a job in the 0.5–7 s window before the LLM response lands, which
+        /// is exactly the "LLM says X, pawn does Y" behavior observed live on 2026-11-15. Player orders, drafting and
+        /// emergency survival sit ABOVE us in the tree and still win natively; an exhausted pawn (rest &lt; 0.1) is never
+        /// held so vanilla sleep takes over. Main thread only.
+        /// </summary>
+        public bool ShouldHoldPawn(Pawn pawn)
+        {
+            Settings s = AIColonistMod.Settings;
+            if (s == null || !s.EnableAI || !s.AIFirstJobPriority) return false;
+
+            PawnCallState st;
+            if (!callStates.TryGetValue(pawn.ThingID, out st)) return false; // never dispatched — nothing to wait for
+
+            // Physiological floor: an exhausted pawn must sleep NOW — the vanilla GetRest in the sorter below handles it.
+            try { if (pawn.needs?.rest != null && pawn.needs.rest.CurLevelPercentage < 0.1f) return false; } catch { }
+
+            // Circuit breakers: server failing in a row, or the LLM keeps picking targets that go stale → vanilla works.
+            if (st.consecutiveL1Failures >= 2) return false;
+            if (st.staleDrops >= 3) { st.staleDrops = 0; return false; } // half-reset: one vanilla cycle per three stale drops
+
+            // Hold only while a response is actually coming — waiting out the full 30 s cadence window would idle pawns.
+            return st.layer1InFlight;
+        }
+
+        /// <summary>Dispatch produced no usable desire (exception / timeout / unparseable) — feeds the hold circuit breaker.</summary>
+        public void NoteDispatchFailure(string pawnThingId)
+        {
+            PawnCallState st;
+            if (callStates.TryGetValue(pawnThingId, out st)) st.consecutiveL1Failures++;
+        }
+
+        /// <summary>Dispatch produced a buffered desire — the pipeline is healthy, reset the failure breaker.</summary>
+        public void NoteDispatchSuccess(string pawnThingId)
+        {
+            PawnCallState st;
+            if (callStates.TryGetValue(pawnThingId, out st)) st.consecutiveL1Failures = 0;
+        }
+
+        /// <summary>A desire was discarded at consume time (stale target) — feeds the stale-drop breaker.</summary>
+        public void NoteStaleDesire(string pawnThingId)
+        {
+            PawnCallState st;
+            if (callStates.TryGetValue(pawnThingId, out st)) st.staleDrops++;
+        }
+
+        /// <summary>An AI desire actually became a job — both breakers reset (fresh start).</summary>
+        public void NoteDesireExecuted(string pawnThingId)
+        {
+            PawnCallState st;
+            if (callStates.TryGetValue(pawnThingId, out st))
+            {
+                st.staleDrops = 0;
+                st.consecutiveL1Failures = 0;
+            }
+        }
+
         private async Task DispatchLayer1(SensorySnapshot snapshot)
         {
             try
@@ -144,9 +218,12 @@ namespace AIColonists.Core
                 Layer1Request request = new Layer1Request
                 {
                     model = s.Layer1Model,
-                    systemPrompt = PrefixPromptBuilder.BuildSystemPrompt(snapshot),  // TODO: pass mind state for identity prefix
+                    systemPrompt = PrefixPromptBuilder.BuildSystemPrompt(snapshot),  // Phase 2: real per-pawn identity prefix (KV-cached)
                     userPrompt = PrefixPromptBuilder.BuildUserPrompt(snapshot),
-                    temperature = MoodEntropyMapper.MoodToTemperature(s.BaseTemperature), // TODO: feed actual pawn mood (Spec §3.2)
+                    // Phase 2 (Spec §3.2): mood → sampling entropy. The worker thread never touches the pawn — the mood
+                    // percentage was captured into the snapshot on the main thread at scan time.
+                    temperature = MoodEntropyMapper.MoodToTemperature(s.BaseTemperature, snapshot.MoodPercentage),
+                    topP = MoodEntropyMapper.MoodToTopP(snapshot.MoodPercentage),
                     minP = s.MinP,
                     maxTokens = s.Layer1MaxOutputTokens,
                     optionCount = snapshot.Affordances != null ? snapshot.Affordances.Count : 0,
@@ -164,15 +241,21 @@ namespace AIColonists.Core
                 Log.Message("[AIColonists] " + who + " Layer 1: impulse_id=" + (result == null ? -1 : result.impulse_id)
                     + " of " + request.optionCount + ", inner_voice=\"" + (result == null ? "" : result.inner_voice) + "\"");
 
-                if (result == null || !snapshot.Affordances.IsValidImpulse(result.impulse_id)) return;
+                if (result == null || !snapshot.Affordances.IsValidImpulse(result.impulse_id))
+                {
+                    NoteDispatchFailure(snapshot.PawnId); // Phase 2: unparseable/out-of-range → feeds the hold circuit breaker
+                    return;
+                }
 
                 AffordanceOption chosen = snapshot.Affordances[result.impulse_id - 1];
                 intentBuffer.Push(snapshot.PawnId, new QueuedDesire(chosen, result.inner_voice));
+                NoteDispatchSuccess(snapshot.PawnId); // Phase 2: a usable desire landed — pipeline healthy
             }
             catch (Exception e)
             {
                 // Server down / timeout / malformed JSON: fall back to vanilla AI silently (Spec §10).
                 Log.Error("[AIColonists] Layer 1 dispatch failed for " + snapshot.PawnId + ": " + e.Message);
+                NoteDispatchFailure(snapshot.PawnId); // Phase 2: transport failure → feeds the hold circuit breaker
             }
             finally
             {

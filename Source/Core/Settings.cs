@@ -10,6 +10,14 @@ namespace AIColonists.Core
         // Master toggle — AI is OFF by default so the mod never breaks a save without opt-in.
         public bool EnableAI = false;
 
+        // AI-first job priority (backlog #8, user end goal 2026-11-13: "disable much of the vanilla decisions to
+        // prioritize the llm"). ON: while the pawn is waiting on an LLM decision (request in flight or cadence window
+        // closed), our think-tree node holds it with a short wait job instead of returning null — which would let the
+        // vanilla sorter BELOW us (GetFood/GetRest/Work) issue a job first. Player orders, drafting, and emergency
+        // survival nodes sit ABOVE us in the tree and still win natively; an exhausted pawn (rest < 0.1) is never
+        // held (vanilla sleep takes over). OFF: blend mode — vanilla fills the gaps between LLM decisions (old behavior).
+        public bool AIFirstJobPriority = true;
+
         // llama-server endpoints (OpenAI-compatible /v1/chat/completions). One per layer, or all identical.
         // Ports 8091/8092 (NOT 8080/8081): the homelab node runs Open WebUI on 8080 — see server/README.md.
         public string Layer1ServerUrl = "http://127.0.0.1:8091";
@@ -45,6 +53,7 @@ namespace AIColonists.Core
         public override void ExposeData()
         {
             Scribe_Values.Look(ref EnableAI, "enableAI", false);
+            Scribe_Values.Look(ref AIFirstJobPriority, "aiFirstJobPriority", true);
             Scribe_Values.Look(ref Layer1ServerUrl, "layer1ServerUrl", "http://127.0.0.1:8091");
             Scribe_Values.Look(ref Layer2ServerUrl, "layer2ServerUrl", "http://127.0.0.1:8091");
             Scribe_Values.Look(ref Layer3ServerUrl, "layer3ServerUrl", "http://127.0.0.1:8092");

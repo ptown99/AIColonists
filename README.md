@@ -65,6 +65,7 @@ can even split layers across different servers/models.
 | Field | Meaning |
 |-------|---------|
 | **Enable AI** (master switch) | Off = the mod is completely inert (one null check per tick, zero requests). |
+| **AI-first job priority** | On (default): while an LLM decision is in flight the colonist holds position with a short wait job instead of falling back to vanilla work first — so what Layer 1 decides is what the pawn actually does. Off = blend mode (vanilla fills the gaps between decisions). Player orders, drafting and emergency survival always win either way; an exhausted colonist is never held. |
 | Layer 1/2/3 server URL | One endpoint per layer — point all three at one server, or split them across servers/models. |
 | Request timeout (ms) | Per-request HTTP timeout; a failed request falls back to vanilla AI silently (one retry on transport failure). |
 | Layer 1/2/3 model | Model name per layer, as loaded by your server. Must match what the server has running. |
@@ -84,7 +85,10 @@ All LLM activity is distinguishable in `Player.log` by the `[AIColonists]` prefi
 [AIColonists] Hercules Layer 3: consolidation applied - "I am becoming more patient..."
 ```
 
-- **Layer 1** lines appear ~every 30 s per colonist while unpaused; the pawn then walks off and does the job.
+- **Layer 1** lines appear ~every 30 s per colonist while unpaused; the pawn then walks off and does the job. While a
+  decision is in flight (with AI-first priority on) the pawn may stand still for up to ~7.5 s — that's the hold job,
+  not a bug: it keeps vanilla work from pre-empting the LLM's choice. If the server fails twice in a row the mod stops
+  holding and lets vanilla take over until a dispatch succeeds again.
 - **Layer 2** lines carry an outcome tag: `[executed]`, `[dropped: <specific vanilla reason>]`, or
   `[attempt failed at the last moment]`. Executed interactions also grant mood thoughts (Mood tab) and play-log entries.
 - **Layer 3** "consolidation applied" lines appear ~every 5 min per colonist; check the AI Mind tab for the result.
@@ -120,7 +124,7 @@ dotnet build "Source\AIColonists.csproj" -c Release -p:RimWorldDir="C:\path\to\R
 No-game test harness (compiles every real source file against 1.6-fidelity stubs; no RimWorld install needed):
 
 ```powershell
-dotnet run --project Tests     # → 260 checks, all must pass
+dotnet run --project Tests     # → 305 checks, all must pass
 ```
 
 ## Project structure
@@ -157,7 +161,7 @@ AIColonists/
 | File | What it is |
 |------|-----------|
 | [`SPEC.md`](SPEC.md) | Design spec v2.0 — the source of truth for architecture, wire format, and phases. |
-| [`TEST-RESULTS.md`](TEST-RESULTS.md) | Full verification record (§1–§21): decompile findings, E2E protocol tests, live-session results, incident reports. |
+| [`TEST-RESULTS.md`](TEST-RESULTS.md) | Full verification record (§1–§22): decompile findings, E2E protocol tests, live-session results, incident reports. |
 | [`IN-GAME-TEST-CHECKLIST.md`](IN-GAME-TEST-CHECKLIST.md) | In-game test protocol (H1–H5) + deployed-build hash history. |
 | [`OPTIONAL-IMPROVEMENTS.md`](OPTIONAL-IMPROVEMENTS.md) | Backlog — parked ideas with effort estimates and status. |
 
@@ -166,9 +170,9 @@ AIColonists/
 | Phase | Scope | Status |
 |-------|-------|--------|
 | 1 | Async plumbing, ThinkTree foundation, AffordanceScanner, work-job resolution | **Complete + live-verified** |
-| 2 | Differentiation, sensory filter, prefix caching | **Partially complete** — mind state + save/load + mood bridge live; per-pawn identity prefix in prompts is the remaining TODO (currently placeholder text) |
+| 2 | Differentiation, sensory filter, prefix caching | **Complete** (2026-11-15) — real per-pawn identity prefix (KV-cache byte-stable), Intellect→cadence/horizon via the `Intellectual` skill, Mood→entropy wired at dispatch, trait-weight seeding + drift-fed values/fears; plus AI-first job priority (backlog #8). Build + 305/305 harness; live re-test of work impulses is T4 on the checklist |
 | 3 | Layer 2 social engine, Layer 3 memory drift | **Complete + live-verified** (executed warm chats grant mood thoughts; consolidations apply with clamped deltas) |
 | 4 | UI inspector, settings polish, stress test | **Live** — AI Mind tab + full settings surface in use; final H4 `[executed]` observation pending on the test checklist |
 
 Known open items are tracked in [`OPTIONAL-IMPROVEMENTS.md`](OPTIONAL-IMPROVEMENTS.md) (play-log chronicle,
-AI-first job priority, multi-turn dialogue, emotional memory writers).
+multi-turn dialogue, emotional memory writers; AI-first job priority shipped with Phase 2 on 2026-11-15).

@@ -108,6 +108,11 @@ namespace AIColonists.Tests
             Test_DualClockGate(); // needs Settings from Test_ModEntryPoint
             await Test_AsyncDispatchResilienceAsync();
             Test_JobGiver();
+            // Phase 2 (Spec §9): differentiation, sensory filter & prefix caching + AI-first job priority (backlog #8).
+            Test_Phase2MoodAndIntellect();
+            Test_Phase2TraitSeeding();
+            Test_Phase2IdentityPrefix();
+            Test_Phase2Hold();
             Test_DraftPatch();
             Test_InteractionPatch(); // needs EnableAI=true
             Test_ThoughtPatch();     // needs EnableAI=true
@@ -698,6 +703,174 @@ namespace AIColonists.Tests
             // ThingID that looked like a different pawn.
             var snapN = SensoryFramingBuilder.CaptureMainThreadSnapshot(pawn, new List<AffordanceOption>());
             Check(snapN.PawnName == pawn.LabelCap && snapN.PawnId == pawn.ThingID, "snapshot carries display name + stable ThingID key");
+        }
+
+        // ------------------------------------------------------------ Phase 2: mood → entropy + intellect tiers (Spec §3.2)
+        static void Test_Phase2MoodAndIntellect()
+        {
+            Section("Phase 2 — mood bands, entropy mapping & intellect tiers (Spec §3.2)");
+
+            // Mood tier bands over the 0..1 percentage from Need_Mood.CurLevelPercentage.
+            Check(MoodEntropyMapper.MoodTier(0.9f) == "ecstatic", ">=0.75 ecstatic");
+            Check(MoodEntropyMapper.MoodTier(0.6f) == "happy", ">=0.6 happy");
+            Check(MoodEntropyMapper.MoodTier(0.45f) == "content", ">=0.45 content");
+            Check(MoodEntropyMapper.MoodTier(0.3f) == "stressed", ">=0.3 stressed");
+            Check(MoodEntropyMapper.MoodTier(0.15f) == "depressed", ">=0.15 depressed");
+            Check(MoodEntropyMapper.MoodTier(0.1f) == "furious", "<0.15 furious (vanilla berserk zone)");
+            Check(MoodEntropyMapper.MoodTier(-1f) == "content" && MoodEntropyMapper.MoodTier(1.5f) == "content",
+                "out-of-range / unknown mood falls back to the content baseline");
+
+            // Float overloads for the worker thread: base + tier offset, hard-clamped to [0.50, 0.85].
+            Check(Math.Abs(MoodEntropyMapper.MoodToTemperature(0.7f, 0.9f) - 0.75f) < 1e-4f, "ecstatic: +0.05 → 0.75");
+            Check(Math.Abs(MoodEntropyMapper.MoodToTemperature(0.7f, 0.2f) - 0.55f) < 1e-4f, "depressed: -0.15 → 0.55");
+            Check(MoodEntropyMapper.MoodToTemperature(0.7f, 0.1f) == MoodEntropyMapper.TempCeiling, "furious: +0.20 clamps to ceiling 0.85");
+            Check(Math.Abs(MoodEntropyMapper.MoodToTopP(0.9f) - 0.92f) < 1e-4f, "ecstatic top_p 0.92");
+            Check(Math.Abs(MoodEntropyMapper.MoodToTopP(0.2f) - 0.80f) < 1e-4f, "depressed top_p 0.80");
+            Check(Math.Abs(MoodEntropyMapper.MoodToTopP(-1f) - 0.85f) < 1e-4f, "unknown mood top_p = content baseline 0.85");
+
+            // Intellect (SkillDefOf.Intellectual level in 1.6) → cadence + colony-horizon tiers.
+            Check(PrefixPromptBuilder.CadenceRuleFor(-1).Contains("plain"), "unknown intellect: neutral cadence");
+            Check(PrefixPromptBuilder.CadenceRuleFor(3).Contains("blunt"), "low (<5): blunt cadence");
+            Check(PrefixPromptBuilder.CadenceRuleFor(7).Contains("notice details"), "mid (5-9): detail-pausing cadence");
+            Check(PrefixPromptBuilder.CadenceRuleFor(12).Contains("layered"), "high (>=10): layered cadence");
+            Check(PrefixPromptBuilder.ColonyHorizonFor(3) == "", "low intellect: no colony horizon line");
+            Check(PrefixPromptBuilder.ColonyHorizonFor(7).Contains("loose sense"), "mid intellect: loose settlement awareness");
+            Check(PrefixPromptBuilder.ColonyHorizonFor(12).Contains("wider state"), "high intellect: tracks the wider state");
+        }
+
+        // ------------------------------------------------------------ Phase 2: trait weight seeding (Spec §4.1 layer 2)
+        static void Test_Phase2TraitSeeding()
+        {
+            Section("Phase 2 — continuous trait weight seeding (Spec §4.1 layer 2)");
+            var pawn = MakePawn("seed1");
+            pawn.story.traits.allTraits.Add(new Trait { LabelCap = "Stoic", Degree = 1 });
+            pawn.story.traits.allTraits.Add(new Trait { LabelCap = "Nervous", Degree = -4 });
+            pawn.story.traits.allTraits.Add(new Trait { LabelCap = "SuppressedOne", Degree = 3, Suppressed = true });
+
+            var mind = new ColonistMindState(pawn);
+            ColonistMindState.SeedTraitWeightsFromPawn(mind, pawn);
+            Check(Math.Abs(mind.traitWeights["stoic"] - 0.65f) < 1e-4f, "degree +1 → weight 0.65 (0.5 + 0.15·degree)");
+            Check(Math.Abs(mind.traitWeights["nervous"] - 0.05f) < 1e-4f, "degree -4 clamps to the floor 0.05");
+            Check(!mind.traitWeights.ContainsKey("suppressedone"), "suppressed traits are not seeded");
+
+            mind.traitWeights["stoic"] = 0.9f; // simulate Layer 3 drift having moved the weight
+            ColonistMindState.SeedTraitWeightsFromPawn(mind, pawn);
+            Check(Math.Abs(mind.traitWeights["stoic"] - 0.9f) < 1e-4f, "idempotent: re-seeding never overwrites drifted weights");
+
+            var fresh = new ColonistMindState(pawn);
+            ColonistMindState.SeedTraitWeightsFromPawn(fresh, null);
+            Check(fresh.traitWeights.Count == 0, "null pawn: seeding is a safe no-op");
+        }
+
+        // ------------------------------------------------------------ Phase 2: identity prefix (Spec §7.1)
+        static void Test_Phase2IdentityPrefix()
+        {
+            Section("Phase 2 — per-pawn identity prefix & KV-cache byte stability (Spec §7.1)");
+            var map = new Map();
+            map.Parent = new RimWorld.Planet.Settlement { Name = "Home" };
+            Find.CurrentMap = map;
+
+            var pawn = MakePawn("id1", map);
+            pawn.LabelCap = "Alice";
+            pawn.ageTracker.AgeBiologicalYears = 42;
+            pawn.story.traits.allTraits.Add(new Trait { LabelCap = "Stoic", Degree = 1 });
+            pawn.story.traits.allTraits.Add(new Trait { LabelCap = "Quick-Tempered", Degree = -2 });
+            var miningDef = new SkillDef { label = "mining" };
+            var cookingDef = new SkillDef { label = "cooking" };
+            pawn.skills.skills.Add(new SkillRecord { def = miningDef, levelInt = 10 });
+            pawn.skills.skills.Add(new SkillRecord { def = cookingDef, levelInt = 8 }); // above intellect so top-2 is mining+cooking
+            pawn.skills.skills.Add(new SkillRecord { def = SkillDefOf.Intellectual, levelInt = 7 });
+
+            var wc = Find.World.GetComponent<AIColonistWorldComponent>();
+
+            var snap1 = SensoryFramingBuilder.CaptureMainThreadSnapshot(pawn, new List<AffordanceOption>());
+            Check(snap1.AgeYears == 42 && snap1.ColonyName == "Home" && snap1.IntellectualLevel == 7,
+                "identity capture: age / colony name / intellect level from pawn + map");
+            Check(snap1.TraitsLine.Contains("stoic (clearly)") && snap1.TraitsLine.Contains("quick-tempered (deeply)"),
+                "trait line: lower-cased label + degree descriptor (mildly/clearly/deeply)");
+            Check(snap1.SkillsLine == "You are known around here for your mining and cooking.",
+                "skill line: top-2 skill NAMES only — levels excluded so the cached prefix stays byte-stable");
+
+            string sys1 = PrefixPromptBuilder.BuildSystemPrompt(snap1);
+            Check(sys1.Contains("You are Alice, age 42, living in the settlement of Home."), "prefix: real name/age/colony line");
+            Check(!sys1.Contains("[") && !sys1.Contains("a colonist"), "prefix: no unreplaced placeholders, no generic fallback for a known pawn");
+            Check(sys1.Contains("- Values: stoic") && sys1.Contains("- Dislikes: quick-tempered"),
+                "values/fears from continuous weights (seeded 0.65 / 0.2 cross the 0.55 / 0.35 thresholds)");
+
+            // KV-cache byte stability: an unchanged pawn must produce a byte-identical prefix on the next capture.
+            var snap2 = SensoryFramingBuilder.CaptureMainThreadSnapshot(pawn, new List<AffordanceOption>());
+            Check(PrefixPromptBuilder.BuildSystemPrompt(snap2) == sys1, "byte-stable prefix across captures (KV-cache friendly)");
+
+            // Layer 3 drift feedback: the prefix changes ONLY when a weight crosses a threshold.
+            var mind = wc.GetOrCreateMindState(pawn);
+            mind.traitWeights["quick-tempered"] = 0.6f; // drift pushes it over the value threshold
+            var snap3 = SensoryFramingBuilder.CaptureMainThreadSnapshot(pawn, new List<AffordanceOption>());
+            string sys3 = PrefixPromptBuilder.BuildSystemPrompt(snap3);
+            Check(sys3 != sys1 && sys3.Contains("- Values: stoic, quick-tempered") && sys3.Contains("- Dislikes: pain, hunger"),
+                "prefix updates when drift crosses the 0.55 threshold (aversion falls back to defaults)");
+
+            // Negative mood thoughts → first-person grudge prose (Appendix A).
+            var other = MakePawn("id2", map); other.LabelCap = "Bob";
+            pawn.needs.mood.thoughts.memories.Memories.Add(
+                new Thought_Memory { moodOffset = -3, otherPawn = other, LabelCap = "Ate off the cold floor" });
+            var snap4 = SensoryFramingBuilder.CaptureMainThreadSnapshot(pawn, new List<AffordanceOption>());
+            Check(snap4.BodyAndSurroundingsLines.Any(l => l.Contains("bothered about Bob") && l.Contains("ate off the cold floor")),
+                "negative mood thought → first-person grudge line (zero mechanical terms)");
+
+            Find.CurrentMap = null; // restore — other tests assume no settlement
+        }
+
+        // ------------------------------------------------------------ Phase 2: AI-first hold (backlog #8)
+        static void Test_Phase2Hold()
+        {
+            Section("Phase 2 — AI-first job priority & hold circuit breakers (backlog #8)");
+            var map = new Map();
+            var comp = new AIColonistGameComponent(map);
+            map.RegisterForTests(comp);
+            comp.MapGenerated(); // creates the bridge; gate stays closed (fresh real-time clock) so nothing dispatches
+            var pawn = MakePawn("h1", map);
+
+            var dictField = typeof(AIColonistGameComponent).GetField("callStates", BindingFlags.NonPublic | BindingFlags.Instance);
+            System.Collections.IDictionary dict = (System.Collections.IDictionary)dictField.GetValue(comp);
+            comp.ShouldQueueEvaluation(pawn); // creates the per-pawn state entry
+            object st = dict[pawn.ThingID];
+            var t = st.GetType();
+
+            Check(!comp.ShouldHoldPawn(pawn), "nothing in flight: no hold (vanilla handles the pawn)");
+            t.GetField("layer1InFlight").SetValue(st, true);
+            Check(comp.ShouldHoldPawn(pawn), "request in flight + healthy pipeline: hold the pawn");
+
+            pawn.needs.rest.CurLevelPercentage = 0.05f;
+            Check(!comp.ShouldHoldPawn(pawn), "physiological floor: exhausted (rest < 0.1) is never held — vanilla sleep wins");
+            pawn.needs.rest.CurLevelPercentage = 1f;
+
+            t.GetField("consecutiveL1Failures").SetValue(st, 2);
+            Check(!comp.ShouldHoldPawn(pawn), "circuit breaker: 2 consecutive dispatch failures → no hold (vanilla works)");
+            t.GetField("consecutiveL1Failures").SetValue(st, 1);
+            Check(comp.ShouldHoldPawn(pawn), "one failure still tolerates a hold");
+
+            t.GetField("staleDrops").SetValue(st, 3);
+            Check(!comp.ShouldHoldPawn(pawn), "circuit breaker: 3 stale drops → one vanilla cycle (no hold)");
+            Check((int)t.GetField("staleDrops").GetValue(st) == 0, "stale-drop breaker resets after tripping");
+
+            t.GetField("consecutiveL1Failures").SetValue(st, 3);
+            t.GetField("staleDrops").SetValue(st, 5);
+            comp.NoteDesireExecuted(pawn.ThingID);
+            Check((int)t.GetField("consecutiveL1Failures").GetValue(st) == 0 && (int)t.GetField("staleDrops").GetValue(st) == 0,
+                "an executed AI desire resets both breakers (fresh start)");
+
+            AIColonistMod.Settings.AIFirstJobPriority = false;
+            Check(!comp.ShouldHoldPawn(pawn), "setting OFF: blend mode — never hold even while a request is in flight");
+            AIColonistMod.Settings.AIFirstJobPriority = true;
+
+            // End-to-end JobGiver flow: in-flight + empty buffer → a short Wait hold job, not null.
+            t.GetField("layer1InFlight").SetValue(st, true);
+            var job = new ExposedJobGiver().Give(pawn);
+            Check(job != null && job.def == JobDefOf.Wait && job.expiryInterval == AIColonistGameComponent.HoldPollTicks,
+                "hold job: JobDefOf.Wait with " + AIColonistGameComponent.HoldPollTicks + "-tick expiry (pawn re-thinks when it lands)");
+
+            t.GetField("consecutiveL1Failures").SetValue(st, 2);
+            Check(new ExposedJobGiver().Give(pawn) == null, "breaker tripped: JobGiver falls through to vanilla (null)");
         }
 
         // ------------------------------------------------------------ draft patch (Spec §6.3)

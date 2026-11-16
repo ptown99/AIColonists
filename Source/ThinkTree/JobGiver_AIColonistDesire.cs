@@ -3,6 +3,7 @@ using AIColonists.Core;
 using AIColonists.Prompts;
 using AIColonists.State;
 using AIColonists.UI;
+using RimWorld; // JobDefOf (hold job) — lives in the RimWorld namespace, not Verse
 using Verse;
 using Verse.AI;
 
@@ -31,6 +32,7 @@ namespace AIColonists.ThinkTree
                 // Re-verify on the main thread — the world may have moved while the LLM was thinking (Spec §10).
                 if (desire.IsValidAndReservable(pawn))
                 {
+                    manager.NoteDesireExecuted(pawn.ThingID); // Phase 2: an AI decision actually became a job — breakers reset
                     Job job = JobMaker.MakeJob(desire.jobDef, desire.targetA, desire.targetB);
                     job.expiryInterval = 1800; // re-evaluate after ~30s of game time if long-running (Spec §6.2)
                     MoteBubbleUtility.TryThrowThoughtMote(pawn, desire.innerVoiceShort);
@@ -50,10 +52,12 @@ namespace AIColonists.ThinkTree
 
                     return job;
                 }
-                // Stale target: discard silently and fall through to vanilla AI.
+                // Stale target: the world moved on while the LLM was thinking — discard and let the next decision re-roll.
+                manager.NoteStaleDesire(pawn.ThingID); // Phase 2: feeds the stale-drop circuit breaker (no silent fall-through)
             }
 
-            // 2. Cooldown expired and no request in flight? Snapshot affordances & queue the async call.
+            // 2. Cooldown expired and no request in flight? Snapshot affordances & queue the async call FIRST, so the
+            //    hold below can wait for THIS response instead of falling straight through to vanilla work.
             if (manager.ShouldQueueEvaluation(pawn))
             {
                 List<AffordanceOption> affordances = AffordanceScanner.Scan(pawn);
@@ -61,7 +65,19 @@ namespace AIColonists.ThinkTree
                 manager.EnqueueAsyncLayer1(snapshot);
             }
 
-            // 3. Return null immediately (<0.01ms) — vanilla ThinkTree takes over (Spec §6.2).
+            // 3. Phase 2 (backlog #8): AI-first job priority — while a decision is in flight and the pipeline is healthy,
+            //    hold position with a short wait job instead of returning null. Returning null would let the vanilla
+            //    sorter below this branch issue work in the window before the response lands ("LLM says X, pawn does Y").
+            //    Emergency/drafted/queued nodes sit above us and still win natively; exhausted pawns are never held.
+            if (manager.ShouldHoldPawn(pawn))
+            {
+                var hold = new Job(JobDefOf.Wait);
+                hold.targetA = new LocalTargetInfo(pawn.Position); // already standing there — the wait just holds the slot
+                hold.expiryInterval = AIColonistGameComponent.HoldPollTicks; // re-evaluate when the wait expires (Spec §6.2 pattern)
+                return hold;
+            }
+
+            // 4. Return null immediately (<0.01ms) — vanilla ThinkTree takes over (blend mode, or unhealthy pipeline).
             return null;
         }
     }
