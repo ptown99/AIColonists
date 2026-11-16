@@ -256,6 +256,15 @@ namespace AIColonists.ThinkTree
             string cls = scanner.GetType().Name; // e.g. "WorkGiver_Mine"
             string what = LabelLower(t);
 
+            // Person-targeting givers (prisoners/patients/babies/animals): T4 grading (§23.8) showed thirteen options all reading
+            // "Work on the human nearby." — useless to the LLM and impossible to grade. Each known giver gets its own phrasing
+            // with the target's name where safe; givers without a specific match fall through to the thing-based wording below.
+            if (t is Pawn tp)
+            {
+                string person = PersonWorkPhrase(cls, what, tp);
+                if (person != null) return person;
+            }
+
             if (cls.Contains("Mine")) return "Mine the " + what + " nearby.";
             if (cls.Contains("Haul")) return "Haul the " + what + " to storage.";
             if (cls.Contains("Clean")) return "Clean up the " + what + ".";
@@ -263,6 +272,60 @@ namespace AIColonists.ThinkTree
             if (cls.Contains("Plant") || cls.Contains("Harvest") || cls.Contains("Cut")) return "Tend the " + what + " nearby.";
             if (cls.Contains("Slaughter")) return "Slaughter the " + what + ".";
             return "Work on the " + what + " nearby."; // unknown giver — the Phase 1 phrasing, still valid
+        }
+
+        /// <summary>Descriptive phrasing for givers whose target is a Pawn. Every class name below was verified against the 1.6
+        /// Core+Biotech WorkGiverDefs and decompiled givers (§23.8 recon) — PatientGoToBed* and BringBabyToSafety are NonScan
+        /// (plain WorkGiver, never reach this code), so they need no entry. Returns null when the combination has no specific
+        /// phrasing; the caller then falls back to the thing-based wording.</summary>
+        private static string PersonWorkPhrase(string cls, string what, Pawn target)
+        {
+            // Animals: only a handful of givers target them — everything else keeps the race-label wording ("the caribou").
+            if (!target.RaceProps.Humanlike)
+            {
+                if (cls.Contains("Milk")) return "Milk the " + what + " nearby.";
+                if (cls.Contains("FeedPatient")) return "Bring food to the " + what + " nearby."; // DoctorFeedAnimals reuses WorkGiver_FeedPatient
+                if (cls.Contains("Tend")) return "Tend to the wounded " + what + " nearby.";     // WorkGiver_TendOther_Animal
+                return null;
+            }
+
+            // LabelCap can throw on half-loaded pawns (ErrorOnce 4814 precedent) — unnamed phrasing instead of a dead scan.
+            string name = null;
+            try { name = target.LabelCap; } catch { /* unnamed phrasing below */ }
+            bool named = !string.IsNullOrEmpty(name);
+
+            // Doctor
+            if (cls.Contains("TendSelf")) return cls.Contains("Urgent") || cls.Contains("Emergency") ? "Urgently tend to your own injuries." : "Tend to your own injuries."; // actor == target: WorkGiver_TendSelf yields the pawn itself; Defs use both Urgent and Emergency suffixes
+            if (cls.Contains("Tend")) return cls.Contains("Urgent")
+                ? (named ? "Urgently tend to patient " + name + "." : "Urgently tend to the wounded nearby.")
+                : (named ? "Tend to patient " + name + "." : "Tend to the wounded nearby.");
+            if (cls.Contains("FeedPatient")) return named ? "Bring food to " + name + "." : "Bring food to the hungry nearby.";
+            if (cls.Contains("RescueDowned")) return named ? "Carry downed " + name + " to a bed." : "Carry the downed ally to a bed.";
+            if (cls.Contains("TakeToBed") && !cls.Contains("Warden")) return named ? "Take " + name + " to an operating bed." : "Take the patient to an operating bed."; // WorkGiver_TakeToBedToOperate
+            if (cls.Contains("Visit")) return named ? "Visit sick " + name + "." : "Visit the sick nearby.";
+            if (cls.Contains("DoBill")) return named ? "Operate on " + name + "." : "Perform surgery on the patient nearby."; // medical bills target the patient pawn (billGiversAllHumanlikes)
+
+            // Warden — targets are prisoners; class names from 1.6 Core+Biotech WorkGiverDefs
+            if (cls.Contains("Chat")) return named ? "Chat with prisoner " + name + "." : "Chat with the prisoner nearby.";
+            if (cls.Contains("DeliverFood")) return named ? "Deliver a meal to prisoner " + name + "." : "Deliver a meal to the prisoner nearby.";
+            if (cls.Contains("Warden_Feed")) return named ? "Hand-feed prisoner " + name + "." : "Hand-feed the prisoner nearby.";
+            if (cls.Contains("ReleasePrisoner")) return named ? "Release prisoner " + name + "." : "Release the prisoner nearby.";
+            if (cls.Contains("TakeToBed")) return named ? "Carry prisoner " + name + " to a bed." : "Carry the prisoner to a bed."; // WorkGiver_Warden_TakeToBed
+            if (cls.Contains("Hemogen")) return named ? "Deliver hemogen to prisoner " + name + "." : "Deliver hemogen to the prisoner nearby.";
+            if (cls.Contains("DoExecution")) return named ? "Execute prisoner " + name + "." : "Execute the prisoner nearby.";
+            if (cls.Contains("Strip")) return named ? "Strip prisoner " + name + "." : "Strip the prisoner nearby.";
+
+            // BasicWorker execution targets a colonist, not a prisoner
+            if (cls.Contains("ExecuteGuiltyColonist")) return named ? "Execute guilty colonist " + name + "." : "Execute the guilty colonist nearby.";
+
+            // Childcare (Biotech) — babies and children in the player faction
+            if (cls.Contains("Teach")) return named ? "Teach young " + name + "." : "Teach the child nearby.";
+            if (cls.Contains("CarryToMom")) return named ? "Carry hungry baby " + name + " to its mother." : "Carry the hungry baby to its mother."; // before Breastfeed — the class name contains both substrings
+            if (cls.Contains("Bottle")) return named ? "Bottle-feed baby " + name + "." : "Bottle-feed the hungry baby nearby.";
+            if (cls.Contains("PlayWithBaby")) return named ? "Play with baby " + name + "." : "Play with the baby nearby.";
+            if (cls.Contains("Breastfeed")) return named ? "Breastfeed baby " + name + "." : "Nurse the hungry baby nearby.";
+
+            return "Work with the person nearby."; // unknown mod giver targeting a person — still better than "work on the human"
         }
     }
 }

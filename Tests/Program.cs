@@ -27,6 +27,7 @@ using AIColonists.Social;
 using AIColonists.State;
 using AIColonists.ThinkTree;
 using AIColonists.UI;
+using AIColonistsTests.Fakes; // fake givers carrying VANILLA 1.6 class names — WorkPhrase matches on GetType().Name (§23.8)
 using RimWorld;
 using Verse;
 using Verse.AI;
@@ -494,6 +495,82 @@ namespace AIColonists.Tests
             var opts4 = AffordanceScanner.Scan(p4);
             Check(opts4.Count == 1 && opts4[0].jobDef == JobDefOf.Wait && opts4[0].sensoryDescription.Contains("breathe"),
                 "idle pawn: single Wait fallback option");
+
+            // §23.8 (T4 grading): person-targeting work used to all read "Work on the human nearby." — each vanilla giver
+            // class now gets its own phrasing. Fakes carry verbatim 1.6 class names; WorkPhrase keys off GetType().Name.
+            Pawn targetHuman = MakePawn("target-human"); // no map → never enters the social scan; CanReach via TestRig default
+            targetHuman.def.label = "human";
+            targetHuman.LabelCap = "Ava";
+            Pawn targetPrisoner = MakePawn("target-prisoner");
+            targetPrisoner.def.label = "human";
+            targetPrisoner.LabelCap = "Axe";
+            targetPrisoner.IsPrisoner = true;
+            Pawn targetAnimal = MakePawn("target-animal");
+            targetAnimal.RaceProps.Humanlike = false;
+            targetAnimal.def.label = "caribou";
+
+            void CheckPhrase(WorkGiver_Scanner giver, Pawn target, string expected)
+            {
+                TestRig.Reset();
+                var m = new Map();
+                var actor = MakePawn("actor-" + giver.GetType().Name, m);
+                actor.workSettings.WorkGiversInOrderNormal.Add(giver);
+                TestRig.WorkThings.Add(target); // the stub scanner yields exactly this candidate
+                var o = AffordanceScanner.Scan(actor);
+                // opts[0] is deterministically the first work option: Scan() order is food → rest → work → social → Wait fallback.
+                Check(o.Count >= 1 && o[0].sensoryDescription == expected,
+                    "phrase: " + giver.GetType().Name + " → \"" + expected + "\" (got \"" + (o.Count > 0 ? o[0].sensoryDescription : "<none>") + "\")");
+            }
+
+            // Warden — prisoners
+            CheckPhrase(new WorkGiver_Warden_Chat(), targetPrisoner, "Chat with prisoner Axe.");
+            CheckPhrase(new WorkGiver_Warden_DeliverFood(), targetPrisoner, "Deliver a meal to prisoner Axe.");
+            CheckPhrase(new WorkGiver_Warden_Feed(), targetPrisoner, "Hand-feed prisoner Axe.");
+            CheckPhrase(new WorkGiver_Warden_ReleasePrisoner(), targetPrisoner, "Release prisoner Axe.");
+            CheckPhrase(new WorkGiver_Warden_TakeToBed(), targetPrisoner, "Carry prisoner Axe to a bed.");
+            CheckPhrase(new WorkGiver_Warden_DoExecution(), targetPrisoner, "Execute prisoner Axe.");
+            CheckPhrase(new WorkGiver_Strip(), targetPrisoner, "Strip prisoner Axe."); // targets a prisoner pawn OR its corpse
+            CheckPhrase(new WorkGiver_ExecuteGuiltyColonist(), targetHuman, "Execute guilty colonist Ava."); // BasicWorker — not a prisoner
+
+            // Doctor — patients and self
+            CheckPhrase(new WorkGiver_TendOther_Humanlike(), targetHuman, "Tend to patient Ava.");
+            CheckPhrase(new WorkGiver_TendOtherUrgent(), targetHuman, "Urgently tend to patient Ava.");
+            CheckPhrase(new WorkGiver_FeedPatient(), targetHuman, "Bring food to Ava.");
+            CheckPhrase(new WorkGiver_RescueDowned(), targetHuman, "Carry downed Ava to a bed.");
+            CheckPhrase(new WorkGiver_TakeToBedToOperate(), targetHuman, "Take Ava to an operating bed.");
+            CheckPhrase(new WorkGiver_VisitSickPawn(), targetHuman, "Visit sick Ava.");
+            CheckPhrase(new WorkGiver_DoBill(), targetHuman, "Operate on Ava."); // medical bills target the patient pawn
+
+            // WorkGiver_TendSelf yields the pawn ITSELF — actor-aware phrasing names no one.
+            TestRig.Reset();
+            var mapSelf = new Map();
+            var selfActor = MakePawn("actor-tendself", mapSelf);
+            selfActor.workSettings.WorkGiversInOrderNormal.Add(new WorkGiver_TendSelf());
+            TestRig.WorkThings.Add(selfActor); // the giver yields the pawn itself
+            var optsSelf = AffordanceScanner.Scan(selfActor);
+            Check(optsSelf.Count >= 1 && optsSelf[0].sensoryDescription == "Tend to your own injuries.",
+                "phrase: WorkGiver_TendSelf → actor-aware self-tending (got \"" + (optsSelf.Count > 0 ? optsSelf[0].sensoryDescription : "<none>") + "\")");
+
+            // Childcare (Biotech) — babies and children in the player faction
+            CheckPhrase(new WorkGiver_Teach(), targetHuman, "Teach young Ava.");
+            CheckPhrase(new WorkGiver_BreastfeedCarryToMom(), targetHuman, "Carry hungry baby Ava to its mother."); // class name contains BOTH substrings — CarryToMom must win
+            CheckPhrase(new WorkGiver_BottleFeedBaby(), targetHuman, "Bottle-feed baby Ava.");
+            CheckPhrase(new WorkGiver_PlayWithBaby(), targetHuman, "Play with baby Ava.");
+            CheckPhrase(new WorkGiver_Breastfeed(), targetHuman, "Breastfeed baby Ava.");
+
+            // Hemogen (Biotech) — prisoners
+            CheckPhrase(new WorkGiver_Warden_DeliverHemogen(), targetPrisoner, "Deliver hemogen to prisoner Axe.");
+
+            // Animals keep race-label phrasing for the handful of person-shaped givers that target them.
+            CheckPhrase(new WorkGiver_Milk(), targetAnimal, "Milk the caribou nearby.");
+            CheckPhrase(new WorkGiver_FeedPatient(), targetAnimal, "Bring food to the caribou nearby."); // DoctorFeedAnimals reuses WorkGiver_FeedPatient
+
+            // Half-loaded target (LabelCap throws) → unnamed phrasing; the scan must survive.
+            var halfLoadedTarget = new HalfLoadedPawn { ThingID = "target-halfloaded", Broken = true };
+            CheckPhrase(new WorkGiver_Warden_Chat(), halfLoadedTarget, "Chat with the prisoner nearby.");
+
+            // Unknown giver targeting a person → generic-but-person phrasing, not "work on the human".
+            CheckPhrase(new WorkGiver_Scanner(), targetHuman, "Work with the person nearby.");
         }
 
         // ------------------------------------------------------------ desire re-validation (Spec §10 target desync)

@@ -110,19 +110,22 @@ closed: robocopy `/MIR /XF .gitignore /XD Source Tests`, then hash-verify `6CC1D
 
 ## H. Phase 4 check — AI Mind tab, settings menu, district fallback (~20 min)
 
-Deployed build: DLL SHA256 `75848197CAA71569419056EDA9AAFD65D47FDAFDA554F5BC79C79FBC29C4E184` (deployed 2026-11-16
-with the game closed, robocopy + live==staged hash verified — **supersedes `8BC01297…`** and carries everything in it:
+Deployed build: DLL SHA256 `047B99608C195D0E4E6CC47F44F96C439C0C952C4BCFEF70C151FE176AC40B0A` (deployed 2026-11-16
+with the game closed, robocopy + live==staged hash verified — **supersedes `75848197…`** and carries everything in it:
 work-affordance job resolution (§20), JobOnThing NRE guard (§20.5, ErrorOnce 4813), prisoner/visitor LLM gate + Layer 1
 log naming as `Name (Human####)` (§21, ErrorOnce 4814), **Phase 2 completion + AI-first job priority** (§22, ErrorOnce
 4815), the §22.6 additions (`[hold]` / `[job started]` diagnostic log lines + skills-line prose fix), the one-shot
 cold-start warmup (TEST-RESULTS.md §22.7) — plus the **T4 post-session fixes** (§23): `HasJobOnThing` two-stage contract
 gate before every work-affordance `JobOnThing` call (ErrorOnce 4816; kills the Milk NRE + Lessongiving crashes), worker-
 thread logging moved to a main-thread drain queue (`MainThreadLog`; fixes the in-game log window race), social option
-names kept capitalized + system prompt line "names are people, never occupations", and `[job started]` now logs the
-resolved JobDef: `[job started] "<impulse>" (<defName>)`. Supersedes `48049F1E…`, `19D345EE…`, `FF9BDE47…` (drop-gate
-decomposition + self-targeting guard + NRE fix rounds 1–2), which superseded `82691858…`, `305A33E8…`, `4C20CEC1…`,
-`9F5263E8…`; also bundles the Ollama-ready state verified in TEST-RESULTS.md §19 (all three layers live on
-`http://127.0.0.1:11434` qwen2.5:3b, 100% GPU Vulkan). Full records in TEST-RESULTS.md §14–§23. Harness **322/322**.
+names kept capitalized + system prompt line "names are people, never occupations", `[job started]` now logs the
+resolved JobDef: `[job started] "<impulse>" (<defName>)`, and **descriptive person-work phrasing** (§23.9): work options
+targeting a person no longer read "Work on the human nearby." — each verified 1.6 giver gets its own line
+(`Chat with prisoner Axe.`, `Tend to patient Ava.`, `Milk the caribou nearby.`, actor-aware `Tend to your own injuries.`
+for self-tending, …). Supersedes `48049F1E…`, `19D345EE…`, `FF9BDE47…` (drop-gate decomposition + self-targeting guard
++ NRE fix rounds 1–2), which superseded `82691858…`, `305A33E8…`, `4C20CEC1…`, `9F5263E8…`; also bundles the
+Ollama-ready state verified in TEST-RESULTS.md §19 (all three layers live on
+`http://127.0.0.1:11434` qwen2.5:3b, 100% GPU Vulkan). Full records in TEST-RESULTS.md §14–§23. Harness **348/348**.
 Everything in this section is visual/in-game — the harness pins the data mapping, not the pixels.
 
 **Ollama keep-alive (no setup needed, §22.7):** Ollama's DEFAULT 5-minute keep-alive is exactly the right behavior —
@@ -142,7 +145,10 @@ shifts sampling temperature — visible as more/less varied inner voices at low 
 **T4 is now grep-verifiable (§22.6, defName suffix added §23):** every AI-issued job logs
 `[job started] "<the exact impulse phrasing>" (<JobDef defName>)` — the defName makes per-job giver attribution
 definitive (e.g. `ChatWithPrisoner` vs `FeedPrisoner`, TEST-RESULTS.md §23.8) — and every hold logs `[hold] waiting for
-LLM decision (450 ticks)`. To grade a session:
+LLM decision (450 ticks)`. Since this build (§23.9), the quoted phrasing is also **descriptive** for person-targeting
+work: expect `"Chat with prisoner Axe." (ChatWithPrisoner)` / `"Tend to patient …"` / `"Milk the caribou nearby."`
+instead of the old generic `"Work on the human nearby."` — if you still see the generic line, that giver's class name
+isn't in the map and is worth reporting. To grade a session:
 ```powershell
 Select-String -Path "$env:USERPROFILE\AppData\LocalLow\Ludeon Studios\RimWorld by Ludeon Studios\Player.log" `
   -Pattern "AIColonists" | Where-Object { $_.Line -match "Layer 1:|job started|\[hold\]" }
