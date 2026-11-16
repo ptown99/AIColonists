@@ -74,6 +74,65 @@ namespace AIColonists.Inference
         public async Task<Layer3Result> RequestLayer3Async(Layer3Request request) =>
             await SendChatCompletionAsync(settings.Layer3ServerUrl, BuildLayer3Json(request), ParseLayer3);
 
+        // Cold model loads measured at ~8.3 s on the game PC (RX 6800 + Ollama, qwen2.5:3b, 2026-11-15). The warmup
+        // must outlive that by a wide margin — it runs once per map session on a background thread, so being generous
+        // costs nothing; being too short re-triggers the abort-the-load failure this exists to prevent.
+        private const int WarmUpTimeoutMs = 90_000;
+
+        /// <summary>One-shot cold-start warmup (TEST-RESULTS.md §22.7). Minimal payload — the goal is loading the
+        /// model, not getting an answer (max_tokens=1 keeps inference negligible). Serialized through the same
+        /// SendGate as real dispatches, so it can never collide with them at the transport level.</summary>
+        public async Task<bool> WarmUpAsync()
+        {
+            var sb = new StringBuilder(256);
+            sb.Append('{');
+            AppendJsonStringField(sb, "model", settings.Layer1Model ?? "");
+            sb.Append(",\"messages\":[{\"role\":\"user\",\"content\":\"Warm up.\"}],\"max_tokens\":1,\"stream\":false}");
+            string json = sb.ToString();
+
+            string url = TrimSlash(settings.Layer1ServerUrl) + "/v1/chat/completions";
+            await SendGate.WaitAsync(); // queue wait is free — same contract as the dispatch path
+            try
+            {
+                using (var cts = new System.Threading.CancellationTokenSource(TimeSpan.FromMilliseconds(WarmUpTimeoutMs)))
+                {
+                    HttpResponseMessage resp;
+                    try
+                    {
+                        resp = await SharedHttp.PostAsync(url, new StringContent(json, Encoding.UTF8, "application/json"), cts.Token);
+                    }
+                    catch (System.Threading.Tasks.TaskCanceledException)
+                    {
+                        Log.Message("[AIColonists] warmup timed out after " + WarmUpTimeoutMs + " ms (" + url + ")");
+                        return false;
+                    }
+                    catch (HttpRequestException e)
+                    {
+                        // Server not up yet is a NORMAL pre-game state — one quiet line, no retry (dispatches self-heal).
+                        Log.Message("[AIColonists] warmup skipped, inference server unreachable: " + e.Message);
+                        return false;
+                    }
+
+                    using (resp)
+                    {
+                        if (!resp.IsSuccessStatusCode)
+                        {
+                            string errBody = await resp.Content.ReadAsStringAsync();
+                            Log.Message("[AIColonists] warmup HTTP " + (int)resp.StatusCode + " from " + url
+                                + " | server: " + Truncate(errBody));
+                            return false;
+                        }
+                        Log.Message("[AIColonists] inference backend warm — model loaded, dispatches run at full speed");
+                        return true;
+                    }
+                }
+            }
+            finally
+            {
+                SendGate.Release();
+            }
+        }
+
         /// <summary>Shared /v1/chat/completions transport for ALL layers (Spec §7.1–§7.4): single-flight gate,
         /// per-request timeout, one retry on transport failure, both-sides-of-the-wire error logging.</summary>
         private async Task<T> SendChatCompletionAsync<T>(string baseUrl, string json, Func<string, T> parser)

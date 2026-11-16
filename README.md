@@ -46,13 +46,18 @@ The repo ships the built mod — `Assemblies/AIColonists.dll` + bundled Harmony 
 # 1. install Ollama from https://ollama.com/download
 # 2. pull a small instruct model (~2.2 GB):
 ollama pull qwen2.5:3b
-# 3. optional but recommended — keep the model resident in VRAM so long pauses don't trigger a cold reload:
-setx OLLAMA_KEEP_ALIVE -1    # then restart Ollama once
 ```
 
 In Mod Settings, set **all three layer URLs** to `http://127.0.0.1:11434` and all three model names to
 `qwen2.5:3b`. That's it — Ollama exposes the OpenAI-compatible endpoint the client expects, so no code changes are
 needed for any other OpenAI-compatible server either (just change URL/model).
+
+**No keep-alive environment variable is needed.** Ollama's default 5-minute keep-alive is exactly right: every Layer 1
+call (≤30 s apart while unpaused) resets the timer, so the model stays resident during play and auto-unloads ~5 min
+after you pause or quit. The first dispatch of a session triggers a one-time ~8 s cold load — the mod absorbs it with a
+one-shot warmup request at game start (TEST-RESULTS.md §22.7), which is why Player.log shows
+`[AIColonists] inference backend warm — model loaded, dispatches run at full speed` shortly after launch. Do NOT set
+`OLLAMA_KEEP_ALIVE=-1`: that would pin the model in VRAM forever instead of only during gameplay.
 
 ## Remote `llama-server` backend (optional)
 

@@ -46,10 +46,12 @@ namespace AIColonists.Tests
         public readonly List<Layer3Request> layer3 = new List<Layer3Request>();
         public Func<Layer2Result> onLayer2;
         public Func<Layer3Result> onLayer3;
+        public int warmups; // cold-start warmup recorder (one-shot per map session, §22.7)
 
         public Task<Layer1Result> RequestLayer1Async(Layer1Request request) { layer1.Add(request); return Task.FromResult(new Layer1Result()); }
         public Task<Layer2Result> RequestLayer2Async(Layer2Request request) { layer2.Add(request); var f = onLayer2; return Task.FromResult(f != null ? f() : new Layer2Result()); }
         public Task<Layer3Result> RequestLayer3Async(Layer3Request request) { layer3.Add(request); var f = onLayer3; return Task.FromResult(f != null ? f() : new Layer3Result()); }
+        public Task<bool> WarmUpAsync() { warmups++; return Task.FromResult(true); }
     }
 
     public static class Program
@@ -113,6 +115,7 @@ namespace AIColonists.Tests
             Test_Phase2TraitSeeding();
             Test_Phase2IdentityPrefix();
             Test_Phase2Hold();
+            Test_WarmUpColdStart(); // one-shot cold-start warmup (Ollama cancel-aborts-load finding, §22.7)
             Test_DraftPatch();
             Test_InteractionPatch(); // needs EnableAI=true
             Test_ThoughtPatch();     // needs EnableAI=true
@@ -631,7 +634,7 @@ namespace AIColonists.Tests
         static async Task Test_AsyncDispatchResilienceAsync()
         {
             Section("Async dispatch resilience — server down (Spec §10)");
-            AIColonistMod.Settings.Layer1ServerUrl = "http://127.0.0.1:9"; // closed port → immediate connection refused
+            AIColonistMod.Settings.Layer1ServerUrl = "http://127.0.0.1:9"; // closed port → connection refused (measured ~2.1 s on this machine, not instant)
             var map = new Map();
             var comp = new AIColonistGameComponent(map);
             map.RegisterForTests(comp);
@@ -644,7 +647,11 @@ namespace AIColonists.Tests
             var dictField = typeof(AIColonistGameComponent).GetField("callStates", BindingFlags.NonPublic | BindingFlags.Instance);
             System.Collections.IDictionary dict = (System.Collections.IDictionary)dictField.GetValue(comp);
             bool cleared = false;
-            for (int i = 0; i < 100 && !cleared; i++)
+            // 2026-11-15: window widened 5 s → 15 s. On this machine a connection to closed port 9 is refused after
+            // ~2.1 s (not instant RST), and the one-shot cold-start warmup (§22.7) now serializes ahead of the
+            // dispatch through SendGate: warmup (~2.5 s) + attempt 0 (~2.1 s) + 500 ms retry delay + attempt 1
+            // (~2.1 s) ≈ 7 s worst case. A TRUE wedge never clears, so a longer window only adds robustness.
+            for (int i = 0; i < 300 && !cleared; i++)
             {
                 await Task.Delay(50);
                 object st = dict["a1"];
@@ -874,6 +881,40 @@ namespace AIColonists.Tests
 
             t.GetField("consecutiveL1Failures").SetValue(st, 2);
             Check(new ExposedJobGiver().Give(pawn) == null, "breaker tripped: JobGiver falls through to vanilla (null)");
+        }
+
+        // ------------------------------------------------------------ Phase 2: one-shot cold-start warmup (§22.7)
+        static void Test_WarmUpColdStart()
+        {
+            Section("Phase 2 — one-shot cold-start warmup (Ollama finding, §22.7)");
+            var map = new Map();
+            var comp = new AIColonistGameComponent(map);
+            map.RegisterForTests(comp);
+
+            var fake = new FakeLlamaBridge();
+            typeof(AIColonistGameComponent).GetField("bridge", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(comp, fake);
+
+            Check(fake.warmups == 0, "no warmup before the first dispatch");
+
+            comp.EnqueueAsyncLayer1(new SensorySnapshot { PawnId = "w1", Affordances = new List<AffordanceOption> { MakeOpt(1, "eat", JobDefOf.Ingest) } });
+            bool fired = false;
+            for (int i = 0; i < 150 && !fired; i++) { System.Threading.Thread.Sleep(20); fired = fake.warmups >= 1; }
+            Check(fired, "first Layer 1 dispatch fires the warmup");
+
+            int afterFirst = fake.warmups;
+            comp.EnqueueAsyncLayer1(new SensorySnapshot { PawnId = "w2", Affordances = new List<AffordanceOption> { MakeOpt(1, "eat", JobDefOf.Ingest) } });
+            System.Threading.Thread.Sleep(300);
+            Check(fake.warmups == afterFirst, "second dispatch does NOT re-warm (one-shot per map session)");
+
+            // The real client's warmup degrades quietly when the server is down (normal pre-game state).
+            string savedUrl = AIColonistMod.Settings.Layer1ServerUrl;
+            AIColonistMod.Settings.Layer1ServerUrl = "http://127.0.0.1:9"; // closed port → immediate connection refused
+            try
+            {
+                var real = new LlamaServerClient(AIColonistMod.Settings);
+                Check(!real.WarmUpAsync().Result, "real client: warmup against a closed port returns false (silent no-op)");
+            }
+            finally { AIColonistMod.Settings.Layer1ServerUrl = savedUrl; }
         }
 
         // ------------------------------------------------------------ draft patch (Spec §6.3)

@@ -135,7 +135,31 @@ namespace AIColonists.Core
             st.lastLayer1Tick = Find.TickManager.TicksGame;
             st.lastLayer1RealSeconds = (float)unpausedClock.Elapsed.TotalSeconds;
 
+            MaybeRequestWarmUp(); // one-shot cold-start warmup — must start BEFORE the dispatch task so it wins the SendGate race
             Task.Run(async () => await DispatchLayer1(snapshot));
+        }
+
+        private bool warmupRequested;
+
+        /// <summary>
+        /// One-shot cold-start warmup (2026-11-15, Ollama field finding — TEST-RESULTS.md §22.7): a cold model load
+        /// takes ~8 s and CANCELLING IT MID-LOAD MAKES OLLAMA ABORT THE LOAD (empirically verified). Without this,
+        /// every short-timeout dispatch at game start would start and cancel its own model load forever — the AI
+        /// would stay dead while unpaused. Fired once per map session from the first Layer 1 dispatch (reached only
+        /// with EnableAI on), so a disabled mod never burns an 8 s model load. Fire-and-forget; a failure is quiet
+        /// (server not up yet is normal pre-game) and real dispatches self-heal through the usual breakers.
+        /// </summary>
+        private void MaybeRequestWarmUp()
+        {
+            if (warmupRequested) return;
+            warmupRequested = true;
+
+            ILlamaBridge b = EnsureBridge();
+            Task.Run(async () =>
+            {
+                try { await b.WarmUpAsync(); }
+                catch { /* defensive rule — a throwing warmup must never surface outside its own log line */ }
+            });
         }
 
         // ================================================================ Phase 2: AI-first job priority (backlog #8)

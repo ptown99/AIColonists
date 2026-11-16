@@ -110,16 +110,25 @@ closed: robocopy `/MIR /XF .gitignore /XD Source Tests`, then hash-verify `6CC1D
 
 ## H. Phase 4 check — AI Mind tab, settings menu, district fallback (~20 min)
 
-Deployed build: DLL SHA256 `40E17A09D9E9D18C0B4880DD710657DED71CBE252986520F09C9CA21CF96C275` (deployed 2026-11-15
-~23:40 with the game closed, robocopy + live==staged hash verified — **supersedes `48049F1E…`** (~22:09) and carries
+Deployed build: DLL SHA256 `8BC012974B9EA12CCBE0FEBD8CF97A9F953D3BC378CE0842C3B750EB6BD4E9C5` (deployed 2026-11-15
+~23:44 with the game closed, robocopy + live==staged hash verified — **supersedes `40E17A09…`** (~23:40) and carries
 everything in it: work-affordance job resolution (§20), JobOnThing NRE guard (§20.5, ErrorOnce 4813), prisoner/visitor LLM
 gate + Layer 1 log naming as `Name (Human####)` (§21, ErrorOnce 4814), **Phase 2 completion + AI-first job priority**
-(§22, ErrorOnce 4815) — plus the §22.6 additions: `[hold]` / `[job started]` diagnostic log lines and the skills-line prose
-fix (Intellectual meta-stat excluded from the identity line). Supersedes `19D345EE…`, `FF9BDE47…` (drop-gate decomposition
-+ self-targeting guard + NRE fix rounds 1–2), which superseded `82691858…`, `305A33E8…`, `4C20CEC1…`, `9F5263E8…`; also
+(§22, ErrorOnce 4815), the §22.6 additions (`[hold]` / `[job started]` diagnostic log lines + skills-line prose fix) — plus
+the new **one-shot cold-start warmup** (TEST-RESULTS.md §22.7): at game start the mod fires a single ~90 s-timeout request
+that absorbs Ollama's ~8 s model load exactly once per map session, because cancelling a cold call mid-load makes Ollama
+abort the load (empirically verified). Supersedes `48049F1E…`, `19D345EE…`, `FF9BDE47…` (drop-gate decomposition +
+self-targeting guard + NRE fix rounds 1–2), which superseded `82691858…`, `305A33E8…`, `4C20CEC1…`, `9F5263E8…`; also
 bundles the Ollama-ready state verified in TEST-RESULTS.md §19 (all three layers live on `http://127.0.0.1:11434`
-qwen2.5:3b, 100% GPU Vulkan). Full records in TEST-RESULTS.md §14–§22. Harness **307/307**. Everything in this section is
+qwen2.5:3b, 100% GPU Vulkan). Full records in TEST-RESULTS.md §14–§22. Harness **311/311**. Everything in this section is
 visual/in-game — the harness pins the data mapping, not the pixels.
+
+**Ollama keep-alive (no setup needed, §22.7):** Ollama's DEFAULT 5-minute keep-alive is exactly the right behavior —
+every Layer 1 call (≤30 s apart while unpaused) resets the timer, so the model stays resident during play and auto-unloads
+~5 min after you pause/quit. **Do NOT set `OLLAMA_KEEP_ALIVE=-1`** (that would pin ~2 GB of VRAM forever). The only cost:
+the first dispatch of a session triggers a one-time ~8 s model load, which the mod now absorbs with its warmup request —
+expect `[AIColonists] inference backend warm — model loaded, dispatches run at full speed` in Player.log shortly after
+game start (or a quiet `warmup skipped, inference server unreachable` line if Ollama isn't running yet — normal pre-game).
 
 **What changed for your eyes (Phase 2 + AI-first, §22):** with *AI-first job priority* ON (default), a colonist whose
 LLM decision is still in flight will **stand still for up to ~7.5 s** instead of immediately grabbing vanilla work — that

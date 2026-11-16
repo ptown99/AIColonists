@@ -17,6 +17,15 @@ namespace AIColonists.Inference
 
         /// <summary>Per-colonist memory consolidation + trait drift (Spec §7.4).</summary>
         Task<Layer3Result> RequestLayer3Async(Layer3Request request);
+
+        /// <summary>
+        /// One-shot cold-start warmup (2026-11-15, Ollama field finding — TEST-RESULTS.md §22.7): fires a minimal
+        /// request so the server loads the model in the background BEFORE real dispatches start. Uses a long timeout
+        /// by design: cancelling a cold call mid-load makes Ollama ABORT the load (empirically verified), so without
+        /// this, every short-timeout dispatch at game start would start and cancel its own model load forever.
+        /// Returns true when the server answered (model resident); false on unreachable/failed (silent no-op case).
+        /// </summary>
+        Task<bool> WarmUpAsync();
     }
 
     /// <summary>Everything a Layer 1 call needs, captured on the main thread (Spec §5.1 / §7.1).</summary>
