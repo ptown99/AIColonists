@@ -1,9 +1,8 @@
-# Build intermediates only. Assemblies/ is COMMITTED on purpose: the repo doubles as a ready-to-use mod folder
+# Build intermediates only, for ANY project (Source mod build, Tests harness, Tools probes...).
+# Assemblies/ is COMMITTED on purpose: the repo doubles as a ready-to-use mod folder
 # (clone → copy into RimWorld/Mods/ works without building). Re-add "Assemblies/" here if you want source-only.
-Source/bin/
-Source/obj/
-Tests/bin/
-Tests/obj/
+**/bin/
+**/obj/
 
 # Per-machine build config (copy local.build.props.example → local.build.props and set your RimWorld path)
 Source/local.build.props
