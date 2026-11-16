@@ -31,6 +31,9 @@ namespace AIColonists.Core
         public LocalTargetInfo targetA;
         public LocalTargetInfo targetB;
         public string innerVoiceShort; // rendered as a thought bubble (Spec §6.2)
+        // Phase 2 diagnostics: the exact sensory phrasing from the affordance list — lets the [job started] log line
+        // quote what the LLM picked, so "Layer 1 said X" can be correlated with "pawn did Y" from Player.log alone.
+        public string sensoryDescription;
 
         public QueuedDesire(AffordanceOption option, string innerVoice)
         {
@@ -38,6 +41,7 @@ namespace AIColonists.Core
             targetA = option.targetA;
             targetB = option.targetB;
             innerVoiceShort = innerVoice;
+            sensoryDescription = option.sensoryDescription ?? "";
         }
 
         /// <summary>

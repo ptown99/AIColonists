@@ -33,6 +33,9 @@ namespace AIColonists.ThinkTree
                 if (desire.IsValidAndReservable(pawn))
                 {
                     manager.NoteDesireExecuted(pawn.ThingID); // Phase 2: an AI decision actually became a job — breakers reset
+                    // Phase 2 diagnostics (T4 grading): quote the exact sensory phrasing from the affordance list so
+                    // "Layer 1 said X" (the dispatch line) correlates with "pawn did Y" (this line) in Player.log alone.
+                    Log.Message("[AIColonists] " + SafeWho(pawn) + " [job started] \"" + desire.sensoryDescription + "\"");
                     Job job = JobMaker.MakeJob(desire.jobDef, desire.targetA, desire.targetB);
                     job.expiryInterval = 1800; // re-evaluate after ~30s of game time if long-running (Spec §6.2)
                     MoteBubbleUtility.TryThrowThoughtMote(pawn, desire.innerVoiceShort);
@@ -74,11 +77,22 @@ namespace AIColonists.ThinkTree
                 var hold = new Job(JobDefOf.Wait);
                 hold.targetA = new LocalTargetInfo(pawn.Position); // already standing there — the wait just holds the slot
                 hold.expiryInterval = AIColonistGameComponent.HoldPollTicks; // re-evaluate when the wait expires (Spec §6.2 pattern)
+                // Phase 2 diagnostics: one line per hold window (the wait job suppresses re-thinks until it expires), so
+                // this is low-frequency evidence that AI-first priority actually engaged for this pawn.
+                Log.Message("[AIColonists] " + SafeWho(pawn) + " [hold] waiting for LLM decision (" + AIColonistGameComponent.HoldPollTicks + " ticks)");
                 return hold;
             }
 
             // 4. Return null immediately (<0.01ms) — vanilla ThinkTree takes over (blend mode, or unhealthy pipeline).
             return null;
+        }
+
+        /// <summary>Log-line identity: LabelCap can throw on half-loaded pawns (ErrorOnce 4814 precedent) — a diagnostic
+        /// line must never kill the pawn's think branch.</summary>
+        private static string SafeWho(Pawn pawn)
+        {
+            try { return pawn.LabelCap + " (" + pawn.ThingID + ")"; }
+            catch { return pawn.ThingID; }
         }
     }
 }

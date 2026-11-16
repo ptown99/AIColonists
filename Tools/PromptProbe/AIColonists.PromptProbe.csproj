@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Ollama E2E probe (2026-11-15): builds the mod's EXACT Layer 1 prompts + wire payload, POSTs them to a live
+         endpoint, and parses the responses with the mod's own parser. No game required — verifies the inference side
+         of T4 (schema validity, impulse range, latency vs the 3000 ms budget, identity/mood differentiation). -->
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net5.0</TargetFramework>
+    <LangVersion>9</LangVersion>
+    <AssemblyName>AIColonists.PromptProbe</AssemblyName>
+    <RootNamespace>AIColonists.Probe</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Newtonsoft mirrors RimWorld's JsonUtility (Json.NET under the hood) so parsing is faithful. -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Same link set as the test harness: every real mod source + the stubs, minus generated intermediates. -->
+    <Compile Include="../../Source/**/*.cs" Exclude="../../Source/obj/**;../../Source/bin/**" />
+    <Compile Include="../../Tests/GameStubs.cs" />
+  </ItemGroup>
+
+</Project>

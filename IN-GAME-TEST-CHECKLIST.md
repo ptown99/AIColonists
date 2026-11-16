@@ -110,15 +110,16 @@ closed: robocopy `/MIR /XF .gitignore /XD Source Tests`, then hash-verify `6CC1D
 
 ## H. Phase 4 check — AI Mind tab, settings menu, district fallback (~20 min)
 
-Deployed build: DLL SHA256 `48049F1E3E87B4BE53FCBF977761CA9A2B33ACF38061C0F334E340F924BF58BF` (deployed 2026-11-15
-~22:09 with the game closed, robocopy + live==staged hash verified — **supersedes `19D345EE…`** and carries everything in
-it: work-affordance job resolution (§20), JobOnThing NRE guard (§20.5, ErrorOnce 4813), prisoner/visitor LLM gate + Layer 1
-log naming as `Name (Human####)` (§21, ErrorOnce 4814) — plus the new **Phase 2 completion + AI-first job priority**
-(TEST-RESULTS.md §22, ErrorOnce 4815). Supersedes `FF9BDE47…` (drop-gate decomposition + self-targeting guard + NRE fix
-rounds 1–2), which superseded `82691858…`, `305A33E8…`, `4C20CEC1…`, `9F5263E8…`; also bundles the Ollama-ready state
-verified in TEST-RESULTS.md §19 (all three layers live on `http://127.0.0.1:11434` qwen2.5:3b, 100% GPU Vulkan). Full
-records in TEST-RESULTS.md §14–§22. Harness **305/305**. Everything in this section is visual/in-game — the harness
-pins the data mapping, not the pixels.
+Deployed build: DLL SHA256 `40E17A09D9E9D18C0B4880DD710657DED71CBE252986520F09C9CA21CF96C275` (deployed 2026-11-15
+~23:40 with the game closed, robocopy + live==staged hash verified — **supersedes `48049F1E…`** (~22:09) and carries
+everything in it: work-affordance job resolution (§20), JobOnThing NRE guard (§20.5, ErrorOnce 4813), prisoner/visitor LLM
+gate + Layer 1 log naming as `Name (Human####)` (§21, ErrorOnce 4814), **Phase 2 completion + AI-first job priority**
+(§22, ErrorOnce 4815) — plus the §22.6 additions: `[hold]` / `[job started]` diagnostic log lines and the skills-line prose
+fix (Intellectual meta-stat excluded from the identity line). Supersedes `19D345EE…`, `FF9BDE47…` (drop-gate decomposition
++ self-targeting guard + NRE fix rounds 1–2), which superseded `82691858…`, `305A33E8…`, `4C20CEC1…`, `9F5263E8…`; also
+bundles the Ollama-ready state verified in TEST-RESULTS.md §19 (all three layers live on `http://127.0.0.1:11434`
+qwen2.5:3b, 100% GPU Vulkan). Full records in TEST-RESULTS.md §14–§22. Harness **307/307**. Everything in this section is
+visual/in-game — the harness pins the data mapping, not the pixels.
 
 **What changed for your eyes (Phase 2 + AI-first, §22):** with *AI-first job priority* ON (default), a colonist whose
 LLM decision is still in flight will **stand still for up to ~7.5 s** instead of immediately grabbing vanilla work — that
@@ -126,6 +127,16 @@ hold is the fix for "Layer 1 says X, pawn does Y"; expect work impulses (mine/ha
 (re-test T4). If the server fails twice in a row per pawn, holds stop and vanilla takes over until a dispatch succeeds.
 Prompts also changed: each colonist now has a real identity prefix (name/age/colony/traits/skills/memories) and mood
 shifts sampling temperature — visible as more/less varied inner voices at low mood.
+
+**T4 is now grep-verifiable (§22.6):** every AI-issued job logs `[job started] "<the exact impulse phrasing>"` and every
+hold logs `[hold] waiting for LLM decision (450 ticks)`. To grade a session:
+```powershell
+Select-String -Path "$env:USERPROFILE\AppData\LocalLow\Ludeon Studios\RimWorld by Ludeon Studios\Player.log" `
+  -Pattern "AIColonists" | Where-Object { $_.Line -match "Layer 1:|job started|\[hold\]" }
+```
+Pass = most `Layer 1:` work decisions are followed (seconds later, same pawn) by a matching `[job started]` line and the
+pawn visibly does that job — with occasional `[hold]` lines in between. Bring me Player.log after the session and I'll
+produce the decision→execution match table myself.
 
 - [ ] **H1.** **AI Mind tab name + content.** First: the tab button in the bar should read **"AI Mind"** (plain English,
       no garbled characters). Select a colonist who has already acted on an LLM decision (any pawn from a

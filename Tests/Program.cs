@@ -681,6 +681,8 @@ namespace AIColonists.Tests
             comp.IntentBuffer.Push("j1", new QueuedDesire(MakeOpt(1, "work", new JobDef(), veinJ), "time to dig"));
             var workJob = new ExposedJobGiver().Give(pawn);
             Check(workJob != null && workJob.def != null, "deposited WORK desire consumed as Job (no longer silently discarded)");
+            Check(Log.Messages.Any(m => m.Contains("[job started]") && m.Contains("\"work\"")),
+                "[job started] log line quotes the sensory phrasing (T4 decision→execution correlation)");
 
             var gate = new ExposedGate();
             pawn.Drafted = true;
@@ -868,6 +870,7 @@ namespace AIColonists.Tests
             var job = new ExposedJobGiver().Give(pawn);
             Check(job != null && job.def == JobDefOf.Wait && job.expiryInterval == AIColonistGameComponent.HoldPollTicks,
                 "hold job: JobDefOf.Wait with " + AIColonistGameComponent.HoldPollTicks + "-tick expiry (pawn re-thinks when it lands)");
+            Check(Log.Messages.Any(m => m.Contains("[hold]")), "[hold] log line emitted when the hold engages (T4 correlation)");
 
             t.GetField("consecutiveL1Failures").SetValue(st, 2);
             Check(new ExposedJobGiver().Give(pawn) == null, "breaker tripped: JobGiver falls through to vanilla (null)");

@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "dgSpecHash": "6zIMI6ae3SXFmmm8XK+8sI0+Sz6U+JeOXTOVtsRXs8SbOuNBHqFpCjzI9+IyLOyh3rEqq09xijSq18yirpdiSw==",
+  "success": true,
+  "projectFilePath": "F:\\Antigravity\\Project\\AIColonists\\Tools\\PromptProbe\\AIColonists.PromptProbe.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\jr_hh\\.nuget\\packages\\newtonsoft.json\\13.0.3\\newtonsoft.json.13.0.3.nupkg.sha512"
+  ],
+  "logs": []
+}

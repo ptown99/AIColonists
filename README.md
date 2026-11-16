@@ -88,7 +88,9 @@ All LLM activity is distinguishable in `Player.log` by the `[AIColonists]` prefi
 - **Layer 1** lines appear ~every 30 s per colonist while unpaused; the pawn then walks off and does the job. While a
   decision is in flight (with AI-first priority on) the pawn may stand still for up to ~7.5 s — that's the hold job,
   not a bug: it keeps vanilla work from pre-empting the LLM's choice. If the server fails twice in a row the mod stops
-  holding and lets vanilla take over until a dispatch succeeds again.
+  holding and lets vanilla take over until a dispatch succeeds again. Each AI-issued job also logs
+  `[job started] "<the impulse phrasing>"` and each hold logs `[hold]` — those tags let you verify decision→execution
+  correlation from Player.log alone (no eyeballing required).
 - **Layer 2** lines carry an outcome tag: `[executed]`, `[dropped: <specific vanilla reason>]`, or
   `[attempt failed at the last moment]`. Executed interactions also grant mood thoughts (Mood tab) and play-log entries.
 - **Layer 3** "consolidation applied" lines appear ~every 5 min per colonist; check the AI Mind tab for the result.
@@ -151,7 +153,8 @@ AIColonists/
 │   ├── Patches/                           # minimal Harmony postfixes (draft purge, memory grant, ingest guard, ...)
 │   ├── Social/                            # InteractionWorker_AISocial
 │   └── UI/                                # ITab_Pawn_AIMind, MoteBubbleUtility
-├── Tests/                                 # no-game harness: real sources compiled against 1.6-fidelity stubs (260 checks)
+├── Tests/                                 # no-game harness: real sources compiled against 1.6-fidelity stubs (307 checks)
+├── Tools/PromptProbe/                     # Ollama E2E probe: sends the mod's exact Layer 1 payload to a live endpoint (TEST-RESULTS.md §22.6)
 ├── server/                                # optional: llama-server launch scripts for a GPU box + README
 └── docs                                   # SPEC.md · TEST-RESULTS.md · IN-GAME-TEST-CHECKLIST.md · OPTIONAL-IMPROVEMENTS.md
 ```

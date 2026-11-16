@@ -134,6 +134,7 @@ namespace AIColonists.Prompts
                     foreach (SkillRecord r in records)
                     {
                         if (r == null || r.def == null || r.levelInt < 2) continue; // only real proficiency belongs in identity
+                        if (r.def == SkillDefOf.Intellectual) continue; // meta-stat — it drives cadence/horizon below, and "known for your intellectual" reads wrong
                         if (r.levelInt > best1) { best2 = best1; name2 = name1; best1 = r.levelInt; name1 = r.def.label.ToLower(); }
                         else if (r.levelInt > best2) { best2 = r.levelInt; name2 = r.def.label.ToLower(); }
                     }
