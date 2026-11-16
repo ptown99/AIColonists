@@ -90,6 +90,10 @@ namespace AIColonists.Core
 
         public override void MapComponentTick()
         {
+            // 2026-11-16 (§23.3): flush worker-thread log lines onto the main thread FIRST — before any early return,
+            // so a paused or AI-off game still drains them (an open in-game log window would otherwise race the queue).
+            MainThreadLog.Drain();
+
             // Dual-Clock: the real-time clock only advances while the game is unpaused, so a 10-minute pause
             // costs zero GPU and 3x/4x speed can't multiply request rate (Spec §3.3).
             if (Find.TickManager.Paused)
@@ -257,12 +261,13 @@ namespace AIColonists.Core
 
                 // Phase 1 diagnostic (Spec §6.2): until the thought-bubble mote lands, every Layer 1 decision is
                 // visible in Player.log — this is what distinguishes "server answered but impulse invalid" from
-                // "gate never opened" during in-game testing. Same background-thread Log pattern as the error path below.
-                // 2026-11-15: print the display name with the ThingID in parens — bare IDs ("Human1006") read like a different pawn.
+                // "gate never opened" during in-game testing. 2026-11-15: print the display name with the ThingID in
+                // parens — bare IDs ("Human1006") read like a different pawn. 2026-11-16 (§23.3): this runs on a worker
+                // thread — MainThreadLog, never Verse.Log directly (open in-game log window would race the queue).
                 string who = snapshot.PawnName != null && snapshot.PawnName != snapshot.PawnId
                     ? snapshot.PawnName + " (" + snapshot.PawnId + ")"
                     : (snapshot.PawnName ?? snapshot.PawnId);
-                Log.Message("[AIColonists] " + who + " Layer 1: impulse_id=" + (result == null ? -1 : result.impulse_id)
+                MainThreadLog.Message("[AIColonists] " + who + " Layer 1: impulse_id=" + (result == null ? -1 : result.impulse_id)
                     + " of " + request.optionCount + ", inner_voice=\"" + (result == null ? "" : result.inner_voice) + "\"");
 
                 if (result == null || !snapshot.Affordances.IsValidImpulse(result.impulse_id))
@@ -277,8 +282,8 @@ namespace AIColonists.Core
             }
             catch (Exception e)
             {
-                // Server down / timeout / malformed JSON: fall back to vanilla AI silently (Spec §10).
-                Log.Error("[AIColonists] Layer 1 dispatch failed for " + snapshot.PawnId + ": " + e.Message);
+                // Server down / timeout / malformed JSON: fall back to vanilla AI silently (Spec §10). Worker thread — MainThreadLog.
+                MainThreadLog.Error("[AIColonists] Layer 1 dispatch failed for " + snapshot.PawnId + ": " + e.Message);
                 NoteDispatchFailure(snapshot.PawnId); // Phase 2: transport failure → feeds the hold circuit breaker
             }
             finally
@@ -481,7 +486,7 @@ namespace AIColonists.Core
                     }
                     catch (Exception e)
                     {
-                        Log.Error("[AIColonists] Layer 2 dispatch failed: " + e.Message); // server down → silent vanilla fallback (Spec §10)
+                        MainThreadLog.Error("[AIColonists] Layer 2 dispatch failed: " + e.Message); // worker thread (§23.3); server down → silent vanilla fallback (Spec §10)
                     }
                     finally
                     {
@@ -591,7 +596,7 @@ namespace AIColonists.Core
                     }
                     catch (Exception e)
                     {
-                        Log.Error("[AIColonists] Layer 3 dispatch failed for " + thingId + ": " + e.Message);
+                        MainThreadLog.Error("[AIColonists] Layer 3 dispatch failed for " + thingId + ": " + e.Message); // worker thread (§23.3)
                     }
                     finally
                     {

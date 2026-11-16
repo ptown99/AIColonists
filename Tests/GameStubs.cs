@@ -186,9 +186,12 @@ namespace Verse
     public static class Log
     {
         public static List<string> Messages = new List<string>(); // test recorder — production code never reads this
+        public static List<string> Errors = new List<string>();   // test recorder for Error/ErrorOnce (2026-11-16, §23.3)
+        public static readonly HashSet<int> UsedErrorKeys = new HashSet<int>(); // cleared by TestRig.Reset() for cross-test isolation
         public static void Message(string m) { Messages.Add(m); }
-        public static void Error(string m) { }
-        public static void ErrorOnce(string m, int id) { }
+        public static void Error(string m) { Errors.Add(m); }
+        // Mirrors vanilla semantics: the first call per key logs, later calls with the same key are dropped.
+        public static void ErrorOnce(string m, int id) { if (UsedErrorKeys.Add(id)) Errors.Add(m); }
     }
 
     // [CONFIRMED] standard settings base with virtual ExposeData.
@@ -304,7 +307,7 @@ namespace Verse
     // [CONFIRMED] Verse.ThingMaker.MakeThing(ThingDef, ThingDef stuff = null) is the standard unspawned factory (decompiled 1.6).
     public static class ThingMaker { public static Thing MakeThing(ThingDef def) { return new Thing { def = def }; } }
 
-    public class JobDef { }     // [CONFIRMED] Verse.JobDef (probe: NS=Verse)
+    public class JobDef { public string defName = "StubJob"; } // [CONFIRMED] Verse.JobDef : Def — defName is the def key (used by the §23.5 [job started] attribution suffix)
     public class WorkTypeDef { } // [CONFIRMED] Verse.WorkTypeDef
 
     // [CONFIRMED] 1.6: interaction/letter plumbing types live in VERSE (verified by reflection probe —
@@ -477,6 +480,10 @@ namespace Verse
         // tests substitute `t => null` to exercise the "giver can't work this target" path.
         public static Func<Thing, Job> WorkJobOnThing = DefaultWorkJobOnThing;
         public static Job DefaultWorkJobOnThing(Thing t) => new Job { def = new JobDef(), targetA = new LocalTargetInfo(t) };
+        // 2026-11-16: scriptable WorkGiver_Scanner.HasJobOnThing — vanilla's two-stage contract gate (§23). Default true
+        // (mimics a satisfied gate); tests substitute `(p, t) => false` to exercise the "giver refuses this target" path.
+        public static Func<Pawn, Thing, bool> WorkHasJobOnThing = DefaultWorkHasJobOnThing;
+        public static bool DefaultWorkHasJobOnThing(Pawn p, Thing t) => true;
         public static bool LineOfSightDefault = true;
         public static Dictionary<Thing, Room> RoomsByThing = new Dictionary<Thing, Room>();
         public static List<string> ThrownBubbles = new List<string>(); // MoteMaker.ThrowText call recorder
@@ -496,6 +503,7 @@ namespace Verse
             FindBedForResult = null;
             WorkThings.Clear();
             WorkJobOnThing = DefaultWorkJobOnThing;
+            WorkHasJobOnThing = DefaultWorkHasJobOnThing;
             LineOfSightDefault = true;
             RoomsByThing.Clear();
             ThrownBubbles.Clear();
@@ -506,6 +514,8 @@ namespace Verse
             CanReceiveInteractionResult = true;
             CarryingPawnResult = false;
             Log.Messages.Clear();
+            Log.Errors.Clear();
+            Log.UsedErrorKeys.Clear();
         }
     }
 
@@ -584,11 +594,19 @@ namespace Verse.AI
 
     public class WorkGiver_Scanner : WorkGiver
     {
+        // [CONFIRMED decompiled 2026-11-15] virtual INSTANCE method returning an UNFILTERED candidate stream — e.g. 1.6
+        // WorkGiver_GatherAnimalBodyResources returns ALL faction pawns (humans included); the real gate is HasJobOnThing.
         public virtual IEnumerable<Thing> PotentialWorkThingsGlobal(Pawn pawn) => TestRig.WorkThings;
 
+        // [CONFIRMED decompiled 2026-11-16] public virtual bool HasJobOnThing(Pawn, Thing, bool forced = false) — vanilla's
+        // two-stage contract: the actual per-target validation (animal+comp check for milk/shear/slaughter, NeedsTeacher +
+        // desk-spot reservation for teach). Scriptable via TestRig.WorkHasJobOnThing; default true (gate satisfied).
+        public virtual bool HasJobOnThing(Pawn pawn, Thing t, bool forced = false) => TestRig.WorkHasJobOnThing(pawn, t);
+
         // [CONFIRMED decompiled 2026-11-15] public virtual Job JobOnThing(Pawn, Thing, bool forced = false) — the exact job
-        // this WorkGiver would give for that target. Pure factory (WorkGiver_Slaughter: JobMaker.MakeJob(...); zero
-        // reservation calls in Verse.JobMaker). Scriptable via TestRig.WorkJobOnThing; default mimics vanilla
+        // this WorkGiver would give for that target. NOT universally a pure factory: WorkGiver_Teach mutates the target's
+        // current job (CurJob.SetTarget(B, ...)) and builds its targets from that job — must only be reached after
+        // HasJobOnThing passes (§23). Scriptable via TestRig.WorkJobOnThing; default mimics vanilla
         // (a job targeting the scanned thing).
         public virtual Job JobOnThing(Pawn pawn, Thing t, bool forced = false) => TestRig.WorkJobOnThing(t);
     }

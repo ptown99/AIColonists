@@ -94,7 +94,7 @@ All LLM activity is distinguishable in `Player.log` by the `[AIColonists]` prefi
   decision is in flight (with AI-first priority on) the pawn may stand still for up to ~7.5 s — that's the hold job,
   not a bug: it keeps vanilla work from pre-empting the LLM's choice. If the server fails twice in a row the mod stops
   holding and lets vanilla take over until a dispatch succeeds again. Each AI-issued job also logs
-  `[job started] "<the impulse phrasing>"` and each hold logs `[hold]` — those tags let you verify decision→execution
+  `[job started] "<the impulse phrasing>" (<JobDef defName>)` and each hold logs `[hold]` — those tags let you verify decision→execution
   correlation from Player.log alone (no eyeballing required).
 - **Layer 2** lines carry an outcome tag: `[executed]`, `[dropped: <specific vanilla reason>]`, or
   `[attempt failed at the last moment]`. Executed interactions also grant mood thoughts (Mood tab) and play-log entries.

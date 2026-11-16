@@ -35,7 +35,10 @@ namespace AIColonists.ThinkTree
                     manager.NoteDesireExecuted(pawn.ThingID); // Phase 2: an AI decision actually became a job — breakers reset
                     // Phase 2 diagnostics (T4 grading): quote the exact sensory phrasing from the affordance list so
                     // "Layer 1 said X" (the dispatch line) correlates with "pawn did Y" (this line) in Player.log alone.
-                    Log.Message("[AIColonists] " + SafeWho(pawn) + " [job started] \"" + desire.sensoryDescription + "\"");
+                    // 2026-11-16 (§23.5): suffix the resolved JobDef name — two different work givers can share the same
+                    // generic phrasing ("Work on the human nearby" was Milk for one pawn and a medical job for another),
+                    // and only the def says which vanilla driver will actually run it.
+                    Log.Message("[AIColonists] " + SafeWho(pawn) + " [job started] \"" + desire.sensoryDescription + "\" (" + desire.jobDef.defName + ")");
                     Job job = JobMaker.MakeJob(desire.jobDef, desire.targetA, desire.targetB);
                     job.expiryInterval = 1800; // re-evaluate after ~30s of game time if long-running (Spec §6.2)
                     MoteBubbleUtility.TryThrowThoughtMote(pawn, desire.innerVoiceShort);

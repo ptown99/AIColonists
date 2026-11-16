@@ -103,13 +103,14 @@ namespace AIColonists.Inference
                     }
                     catch (System.Threading.Tasks.TaskCanceledException)
                     {
-                        Log.Message("[AIColonists] warmup timed out after " + WarmUpTimeoutMs + " ms (" + url + ")");
+                        // Worker thread (§23.3): MainThreadLog, never Verse.Log directly — an open in-game log window races the queue.
+                        MainThreadLog.Message("[AIColonists] warmup timed out after " + WarmUpTimeoutMs + " ms (" + url + ")");
                         return false;
                     }
                     catch (HttpRequestException e)
                     {
                         // Server not up yet is a NORMAL pre-game state — one quiet line, no retry (dispatches self-heal).
-                        Log.Message("[AIColonists] warmup skipped, inference server unreachable: " + e.Message);
+                        MainThreadLog.Message("[AIColonists] warmup skipped, inference server unreachable: " + e.Message);
                         return false;
                     }
 
@@ -118,11 +119,11 @@ namespace AIColonists.Inference
                         if (!resp.IsSuccessStatusCode)
                         {
                             string errBody = await resp.Content.ReadAsStringAsync();
-                            Log.Message("[AIColonists] warmup HTTP " + (int)resp.StatusCode + " from " + url
+                            MainThreadLog.Message("[AIColonists] warmup HTTP " + (int)resp.StatusCode + " from " + url
                                 + " | server: " + Truncate(errBody));
                             return false;
                         }
-                        Log.Message("[AIColonists] inference backend warm — model loaded, dispatches run at full speed");
+                        MainThreadLog.Message("[AIColonists] inference backend warm — model loaded, dispatches run at full speed");
                         return true;
                     }
                 }
@@ -162,7 +163,8 @@ namespace AIColonists.Inference
                         {
                             // Mono concurrent-send transport failure — retry ONCE with a fresh budget. Log both
                             // exception levels so the next occurrence is diagnosable from Player.log alone.
-                            Log.Message("[AIColonists] transport error, retrying once: " + e.Message
+                            // Worker thread (§23.3): MainThreadLog, never Verse.Log directly.
+                            MainThreadLog.Message("[AIColonists] transport error, retrying once: " + e.Message
                                 + (e.InnerException != null ? " | inner: " + e.InnerException.Message : ""));
                             await Task.Delay(500);
                             continue;

@@ -110,18 +110,20 @@ closed: robocopy `/MIR /XF .gitignore /XD Source Tests`, then hash-verify `6CC1D
 
 ## H. Phase 4 check — AI Mind tab, settings menu, district fallback (~20 min)
 
-Deployed build: DLL SHA256 `8BC012974B9EA12CCBE0FEBD8CF97A9F953D3BC378CE0842C3B750EB6BD4E9C5` (deployed 2026-11-15
-~23:44 with the game closed, robocopy + live==staged hash verified — **supersedes `40E17A09…`** (~23:40) and carries
-everything in it: work-affordance job resolution (§20), JobOnThing NRE guard (§20.5, ErrorOnce 4813), prisoner/visitor LLM
-gate + Layer 1 log naming as `Name (Human####)` (§21, ErrorOnce 4814), **Phase 2 completion + AI-first job priority**
-(§22, ErrorOnce 4815), the §22.6 additions (`[hold]` / `[job started]` diagnostic log lines + skills-line prose fix) — plus
-the new **one-shot cold-start warmup** (TEST-RESULTS.md §22.7): at game start the mod fires a single ~90 s-timeout request
-that absorbs Ollama's ~8 s model load exactly once per map session, because cancelling a cold call mid-load makes Ollama
-abort the load (empirically verified). Supersedes `48049F1E…`, `19D345EE…`, `FF9BDE47…` (drop-gate decomposition +
-self-targeting guard + NRE fix rounds 1–2), which superseded `82691858…`, `305A33E8…`, `4C20CEC1…`, `9F5263E8…`; also
-bundles the Ollama-ready state verified in TEST-RESULTS.md §19 (all three layers live on `http://127.0.0.1:11434`
-qwen2.5:3b, 100% GPU Vulkan). Full records in TEST-RESULTS.md §14–§22. Harness **311/311**. Everything in this section is
-visual/in-game — the harness pins the data mapping, not the pixels.
+Deployed build: DLL SHA256 `75848197CAA71569419056EDA9AAFD65D47FDAFDA554F5BC79C79FBC29C4E184` (deployed 2026-11-16
+with the game closed, robocopy + live==staged hash verified — **supersedes `8BC01297…`** and carries everything in it:
+work-affordance job resolution (§20), JobOnThing NRE guard (§20.5, ErrorOnce 4813), prisoner/visitor LLM gate + Layer 1
+log naming as `Name (Human####)` (§21, ErrorOnce 4814), **Phase 2 completion + AI-first job priority** (§22, ErrorOnce
+4815), the §22.6 additions (`[hold]` / `[job started]` diagnostic log lines + skills-line prose fix), the one-shot
+cold-start warmup (TEST-RESULTS.md §22.7) — plus the **T4 post-session fixes** (§23): `HasJobOnThing` two-stage contract
+gate before every work-affordance `JobOnThing` call (ErrorOnce 4816; kills the Milk NRE + Lessongiving crashes), worker-
+thread logging moved to a main-thread drain queue (`MainThreadLog`; fixes the in-game log window race), social option
+names kept capitalized + system prompt line "names are people, never occupations", and `[job started]` now logs the
+resolved JobDef: `[job started] "<impulse>" (<defName>)`. Supersedes `48049F1E…`, `19D345EE…`, `FF9BDE47…` (drop-gate
+decomposition + self-targeting guard + NRE fix rounds 1–2), which superseded `82691858…`, `305A33E8…`, `4C20CEC1…`,
+`9F5263E8…`; also bundles the Ollama-ready state verified in TEST-RESULTS.md §19 (all three layers live on
+`http://127.0.0.1:11434` qwen2.5:3b, 100% GPU Vulkan). Full records in TEST-RESULTS.md §14–§23. Harness **322/322**.
+Everything in this section is visual/in-game — the harness pins the data mapping, not the pixels.
 
 **Ollama keep-alive (no setup needed, §22.7):** Ollama's DEFAULT 5-minute keep-alive is exactly the right behavior —
 every Layer 1 call (≤30 s apart while unpaused) resets the timer, so the model stays resident during play and auto-unloads
@@ -137,8 +139,10 @@ hold is the fix for "Layer 1 says X, pawn does Y"; expect work impulses (mine/ha
 Prompts also changed: each colonist now has a real identity prefix (name/age/colony/traits/skills/memories) and mood
 shifts sampling temperature — visible as more/less varied inner voices at low mood.
 
-**T4 is now grep-verifiable (§22.6):** every AI-issued job logs `[job started] "<the exact impulse phrasing>"` and every
-hold logs `[hold] waiting for LLM decision (450 ticks)`. To grade a session:
+**T4 is now grep-verifiable (§22.6, defName suffix added §23):** every AI-issued job logs
+`[job started] "<the exact impulse phrasing>" (<JobDef defName>)` — the defName makes per-job giver attribution
+definitive (e.g. `ChatWithPrisoner` vs `FeedPrisoner`, TEST-RESULTS.md §23.8) — and every hold logs `[hold] waiting for
+LLM decision (450 ticks)`. To grade a session:
 ```powershell
 Select-String -Path "$env:USERPROFILE\AppData\LocalLow\Ludeon Studios\RimWorld by Ludeon Studios\Player.log" `
   -Pattern "AIColonists" | Where-Object { $_.Line -match "Layer 1:|job started|\[hold\]" }
@@ -192,7 +196,7 @@ produce the decision→execution match table myself.
       first post-unpause tick; that is benign by design, but we want your observation on hand).
 
 ---
-## Status: Phase 1 — PASS (2026-11-12) · Phase 3 + mood bridge — COMPLETE (2026-11-13): interaction execution live-verified (G7), mood bridge confirmed in Mood tab + pawn log (G3; G4 partial — warm-chat side only) · **Phase 4 — DEPLOYED (2026-11-14 ~14:05, build `FF9BDE47…`, + drop-gate decomposition logging): harness 252/252; H1/H2 PASS (user); H3 partial (preset buttons confirmed on UI side by user; cfg-write + served-model proof still pending); H4 re-test done twice — night: Layer 2 fired for the first time, all dispatches `[dropped]` on proximity; morning (clustered 4 pawns in a small room ~10:42, unpaused ~10:44): 5 Layer 2 decisions in ~2 min (3 `[dropped]`, 2 self-targeting `[attempt failed]` — the LLM returned the initiator's own name; safe failure, fix pending), then silence BY DESIGN: pawns scattered to jobs → no shared space with 2+ undrafted colonists → no dispatch (the 90 s clock only advances on actual dispatch), and quiet impulses (`none`/`quiet_nod`/`avoid_gaze`) log nothing by design; zero Ingest NREs, zero `dispatch failed`; awaiting one `[executed]` or acceptance of partial pass; save-load NRE: round 1 (LabelCap) deployed ~01:56, **round 2 (`ThoughtDef.Label` computed-property NRE — `stages[0]` NULL mid-load) found + fixed + bundled into `82691858…` with the self-targeting guard (consume-side drop for ALL impulse types + "never yourself" prompt rule) — CONFIRMED LIVE 13:37 session: save load clean, zero NRE lines**; H4 afternoon re-test: 8 `[dropped]` pre-cluster, then 3×3-room cluster test ongoing; drop-gate decomposition (`FF9BDE47…`) will attribute each remaining drop; H5 open · **Phase 2 + AI-first job priority — DEPLOYED (2026-11-15 ~22:09, build `48049F1E…`, harness 305/305, TEST-RESULTS.md §22): real per-pawn identity prefix (KV-cache byte-stable), Intellect→cadence/horizon, Mood→entropy at dispatch, trait-weight seeding + drift-fed values/fears, hold-job AI-first priority with circuit breakers — open item: live re-test that work impulses now execute (T4)**
+## Status: Phase 1 — PASS (2026-11-12) · Phase 3 + mood bridge — COMPLETE (2026-11-13): interaction execution live-verified (G7), mood bridge confirmed in Mood tab + pawn log (G3; G4 partial — warm-chat side only) · **Phase 4 — DEPLOYED (2026-11-14 ~14:05, build `FF9BDE47…`, + drop-gate decomposition logging): harness 252/252; H1/H2 PASS (user); H3 partial (preset buttons confirmed on UI side by user; cfg-write + served-model proof still pending); H4 re-test done twice — night: Layer 2 fired for the first time, all dispatches `[dropped]` on proximity; morning (clustered 4 pawns in a small room ~10:42, unpaused ~10:44): 5 Layer 2 decisions in ~2 min (3 `[dropped]`, 2 self-targeting `[attempt failed]` — the LLM returned the initiator's own name; safe failure, fix pending), then silence BY DESIGN: pawns scattered to jobs → no shared space with 2+ undrafted colonists → no dispatch (the 90 s clock only advances on actual dispatch), and quiet impulses (`none`/`quiet_nod`/`avoid_gaze`) log nothing by design; zero Ingest NREs, zero `dispatch failed`; awaiting one `[executed]` or acceptance of partial pass; save-load NRE: round 1 (LabelCap) deployed ~01:56, **round 2 (`ThoughtDef.Label` computed-property NRE — `stages[0]` NULL mid-load) found + fixed + bundled into `82691858…` with the self-targeting guard (consume-side drop for ALL impulse types + "never yourself" prompt rule) — CONFIRMED LIVE 13:37 session: save load clean, zero NRE lines**; H4 afternoon re-test: 8 `[dropped]` pre-cluster, then 3×3-room cluster test ongoing; drop-gate decomposition (`FF9BDE47…`) will attribute each remaining drop; H5 open · **Phase 2 + AI-first job priority — DEPLOYED (2026-11-15 ~22:09, build `48049F1E…`, harness 305/305, TEST-RESULTS.md §22): real per-pawn identity prefix (KV-cache byte-stable), Intellect→cadence/horizon, Mood→entropy at dispatch, trait-weight seeding + drift-fed values/fears, hold-job AI-first priority with circuit breakers — open item: live re-test that work impulses now execute (T4) — **T4 GRADED PASS 2026-11-16 (§23, build `75848197…`): 21/22 decisions executed with eat/rest/caribou all correct; the work-giver gate fix + main-thread logging + defName attribution shipped in the same build (harness 322/322); next session re-verifies zero Milk/Lessongiving exceptions and gives definitive job attribution via the defName suffix**
 
 All A–D items verified live against RimWorld 1.6.4871 with the Nov 9 llama.cpp build on CPU, including visual
 confirmation of the thought bubble (D5). Full findings, root causes (JsonUtility dead end, object-form `json_schema`,

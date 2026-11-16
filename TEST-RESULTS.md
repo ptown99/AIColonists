@@ -858,3 +858,50 @@ Fix = one-shot warmup per map session:
 - **Deployed 2026-11-15 ~23:44** (game closed): live == staged SHA256 `8BC012974B9EA12CCBE0FEBD8CF97A9F953D3BC378CE0842C3B750EB6BD4E9C5`; supersedes `40E17A09…`.
 
 In-game expectation: once per map session, Player.log gains the warm line ~8–9 s after game start when the model was cold (or a quiet skip line if Ollama isn't up yet); pawns still briefly hold (~0.5–7.5 s) while individual decisions are in flight; the model stays resident for as long as play continues and unloads itself ~5 min after pause/quit.
+
+## 23. First full T4 session — decision→execution grading + work-giver gate fix (2026-11-16, build `75848197…`)
+User played ~10 min (Onnana Nation colony; Cook/Manager Human1006, Aiglamene/Logger Human1000, Hercules/Chief Human1003) and brought Player.log. 96 `[AIColonists]` lines total.
+
+### 23.1 T4 verdict: PASS (with one broken option class — fixed in this build)
+- **Warmup confirmed in-game:** `inference backend warm — model loaded, dispatches run at full speed` at game start (§22.7); **zero cold-call timeouts** across the whole session.
+- **Decision→execution: 21/22 executed.** Every Layer 1 decision (Cook 10, Aiglamene 8, Hercules 4) was followed by a matching `[job started]` line — except Hercules's final decision, still queued when the log ended. Executed jobs: eat ×5, rest ×3, caribou work ×3, work-on-human ×10. The inner voices matched the executed jobs (hungry → eat, tired → bed, "caribou are easier to catch" → work on caribou).
+- **Differentiation confirmed in-game:** Cook's voices long and reflective ("Each warm chat with Hercules is a reminder of the importance of maintaining connections…"), Aiglamene terse and practical ("Time to fill my belly."), Hercules gruff and short ("Hungry... might as well grab that meal."). Phase 2 is visibly working.
+- **Layer 2:** 2 warm_chat decisions, both correctly dropped at the gate with decomposed reasons (`recipient state (awake/burning)`, `distance>6cells`) — re-roll path healthy. **Layer 3:** 4 consolidations applied (Cook ×2, Aiglamene, Hercules).
+
+### 23.2 Bugs A+B (one root cause): work options skipped vanilla's HasJobOnThing gate
+Live exceptions in the session:
+- `Exception in CheckCurrentToilEndOrFail for pawn Aiglamene driver=JobDriver_Milk … driver.job=(Milk … A = Thing_Human1006 Giver = JobGiver_AIColonistDesire)` + NRE inside a `JobDriver_GatherAnimalBodyResources` toil closure — **a Milk job targeting human colonist Cook**.
+- `Exception ticking Aiglamene: IndexOutOfRangeException` ×5, stack `JobDriver_Lessongiving.TryMakePreToilReservations → ReservationUtility.ReserveSittableOrSpot → GridsUtility.GetEdifice → EdificeGrid.get_Item` — Lessongiving (teach) jobs failing pre-toil reservation.
+
+Decompiled 1.6 (source of truth):
+- `WorkGiver_GatherAnimalBodyResources.PotentialWorkThingsGlobal` returns **ALL faction pawns** (`SpawnedPawnsInFaction(pawn.Faction)` — humans included); the animal check lives ONLY in `HasJobOnThing`/`ShouldSkip`. Its `JobOnThing` is a bare `MakeJob(JobDef, t)` with no animal check.
+- `WorkGiver_Teach.PotentialWorkThingsGlobal` returns **every player-faction pawn**; `HasJobOnThing` requires `SchoolUtility.NeedsTeacher(target)` — Biotech school children only (user-confirmed: in vanilla only children can be taught); and its `JobOnThing` builds `Lessongiving(targetA = target.CurJob.GetTarget(A), targetB = target)` while **mutating the target pawn's current job** (`CurJob.SetTarget(B, …)`) — not a pure factory as the §20 comment assumed.
+- So the §20 scanner (which called `JobOnThing` directly) offered: Milk(Cook) → vanilla NRE in the milk driver; and Lessongiving whose "desk" was whatever Cook's current job targeted (a bed, a meal, nothing) → `DeskSpotTeacher(bed)` computed an out-of-bounds sitting cell → IndexOutOfRange. Aiglamene's 5 work-on-human jobs all crashed at start (Milk ×1 + Lessongiving ×4 attributed to our jobs; one further Lessongiving exception can't be attributed from the stack alone — it doesn't show the think node). Cook's 5 work-on-human jobs started without exception (job def not attributable in this build — which is exactly what motivated the §23.5 suffix).
+
+**Fix:** honor vanilla's two-stage contract — `AddWorkAffordances` now calls `scanner.HasJobOnThing(pawn, t)` (try/catch, ErrorOnce **4816**) BEFORE `JobOnThing`. After the fix, human-target work options only appear when genuinely valid (patient-care givers for downed/sick colonists; teach only in a real Biotech school). Harness: scriptable `TestRig.WorkHasJobOnThing` + 3 new scan checks.
+
+### 23.3 Bug C: worker-thread logging raced the in-game log window
+Live: `Exception filling window for LudeonTK.EditWindow_Log: InvalidOperationException: Collection was modified; enumeration operation may not execute` ×2 (+ cascading GUI clip error) — while the user had the in-game log window open. Decompiled `Verse.Log`: Message/Warning/Error all lock around **ENQUEUE** only; `LudeonTK.EditWindow_Log` is an INTERNAL class inside Assembly-CSharp.dll (RimWorld's own log window, not a third-party mod) and enumerates the queue WITHOUT that lock → any Log.Message from a worker thread races an open window. Our Layer 1 / warmup / transport lines logged from Task threads every ~30 s per pawn.
+
+**Fix:** `MainThreadLog` (Core) — ConcurrentQueue drained at the TOP of `MapComponentTick` (before the pause/AI-off early returns, so lines always flush); all 9 worker-thread log sites converted (4 in AIColonistGameComponent, 5 in LlamaServerClient). Main-thread sites unchanged. Harness: `Test_MainThreadLog` (deferred until drain; ErrorOnce dedupe at drain time; empty drain no-op) + stub `Log` now records Errors with vanilla ErrorOnce semantics.
+
+### 23.4 Prompt fix: name-vs-action confusion
+User observation: the model conflated the colonist named Cook with the act of cooking in some inner voices. Root cause: social options lower-cased names ("Go talk to cook.") — reads as a verb. **Fix:** keep `LabelCap` capitalized in social phrasing (with a save-load guard per the ErrorOnce 4814 precedent) + static system-prompt line "Names in your options are people's names, never occupations or actions (Cook is a person, not cooking)." Probe re-run: 6/6 schema-valid, differentiation intact.
+
+### 23.5 `[job started]` now carries the resolved JobDef
+Two different work givers can share the generic phrasing ("Work on the human nearby" was Milk for one pawn and something else for another), so the line now reads `[job started] "<phrasing>" (<JobDef defName>)` — next session's grading is definitive.
+
+### 23.6 Not our bug (recorded for completeness)
+- `Exception in CheckCurrentToilEndOrFail for pawn Cook driver=JobDriver_TakeToBed … Giver = ThinkNode_QueuedJob` + InvalidCastException in `JobDriver_TakeToBed.get_DropBed()` — a PLAYER-QUEUED rescue job (Giver is the queue node, not ours); vanilla edge case during the Hercules downed/rescue sequence.
+
+### 23.7 Build / test record
+- Product build vs real DLLs: **0 warnings, 0 errors** (the `HasJobOnThing(Pawn, Thing, bool)` signature was confirmed by compiling against the real 1.6 API). Harness **322/322** (+11: gate refused ×2, throwing-gate skip ×1, MainThreadLog ×8).
+- Probe re-run with the new system line: 6/6 schema-valid (cold call 8852 ms — model had auto-unloaded per the default keep-alive; warm 403–583 ms).
+- **Deployed 2026-11-16** (game closed): live == staged SHA256 `75848197CAA71569419056EDA9AAFD65D47FDAFDA554F5BC79C79FBC29C4E184`; supersedes `8BC01297…`.
+
+### 23.8 Post-session investigation: Cook's "work on human" jobs = warden work on the prisoner (hypothesis confirmed)
+- User hypothesis (2026-11-16): Cook's clean human-work jobs were directed at the colony's prisoner, not a name-confusion artifact. **Confirmed by save + def evidence:**
+  - Save `Onnana Nation.rws`: Fir "Axe" Reekad (Human63250, SpaceRefugee) is on map 0 with `<guestStatus>Prisoner</guestStatus>`, hostFaction = player faction, interactionMode AttemptRecruit. Cook's inner voice names "Axe" during exactly those decisions (Player.log L99: *"Perhaps a light conversation with Axe could be a good start"*).
+  - WorkSettings decode: the save stores 21 positional priority values = Core's 20 WorkTypeDefs in file order + Biotech Childcare. Mapping **behaviorally validated**: Aiglamene has Handling=3 and Childcare=3 — exactly the work types that produced her milk/teach jobs in T4 — with Warden=0, and she never did a human-warden job. Cook decodes to **Warden 3, Doctor 3, Childcare 3** (Handling/Construction/Mining/Art off). An earlier "Cook Warden=0" note was an off-by-one miscount of the value list.
+  - Core's Warden givers (1.6) are all "work on human" jobs targeting prisoners: `ChatWithPrisoner` ("chat with prisoners"), `FeedPrisoner`, `DeliverFoodToPrisoner`, `TakePrisonerToBed`, `ReleasePrisoner`, `DoExecution`.
+  - Caveat: T4 predates defName attribution, so per-job giver identity (chat vs feed) is inferential; from the next session onward `[job started] (…) (<defName>)` makes this grep-provable. The name-confusion fix (§23.4) still stands as a separate real issue — it just wasn't the cause of these jobs.

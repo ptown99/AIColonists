@@ -136,12 +136,33 @@ namespace AIColonists.ThinkTree
                     // 2026-11-15 fix (live symptom: "pawns don't do what Layer 1 says" — plus the model noticing its own
                     // "repetitive options"): these entries used to carry a null jobDef and were therefore ALWAYS rejected by
                     // QueuedDesire.IsValidAndReservable, so every work impulse silently fell through to vanilla. Now resolve
-                    // the exact Job the WorkGiver would make for this target at scan time: JobOnThing is a pure factory
-                    // (decompiled 1.6: WorkGiver_Slaughter.JobOnThing = JobMaker.MakeJob(...); Verse.JobMaker contains zero
-                    // reservation calls), so it is side-effect-free, and the giver list is already schedule-gated —
-                    // Pawn_WorkSettings.CacheWorkGiversInOrder only keeps work types with GetPriority(w) > 0, so we never
-                    // offer work the pawn isn't scheduled for. TODO(Phase 2): richer sensory descriptions (Spec §5.1.3).
+                    // the exact Job the WorkGiver would make for this target at scan time, and the giver list is already
+                    // schedule-gated — Pawn_WorkSettings.CacheWorkGiversInOrder only keeps work types with GetPriority(w) > 0,
+                    // so we never offer work the pawn isn't scheduled for. TODO(Phase 2): richer sensory descriptions (Spec §5.1.3).
                     // [CONFIRMED decompiled 2026-11-15] 1.6 Job stores its def as `public JobDef def` (renamed from pre-1.5 jobDef).
+                    //
+                    // 2026-11-16 fix (live NREs + IndexOutOfRange, TEST-RESULTS.md §23): honor VANILLA'S TWO-STAGE CONTRACT.
+                    // PotentialWorkThingsGlobal is an UNFILTERED candidate stream — decompiled 1.6: WorkGiver_GatherAnimalBodyResources
+                    // returns ALL faction pawns (humans included) and WorkGiver_Teach returns EVERY player-faction pawn; the real
+                    // validation lives in HasJobOnThing (animal + comp check, NeedsTeacher + desk-spot reservation). Calling
+                    // JobOnThing directly produced Milk jobs targeting human colonists (vanilla NRE in JobDriver_Milk's toils) and
+                    // Lessongiving jobs built from the target's CURRENT job (IndexOutOfRange in
+                    // JobDriver_Lessongiving.TryMakePreToilReservations when the "desk" was a bed at the map edge). Note also that
+                    // WorkGiver_Teach.JobOnThing is NOT side-effect-free — it mutates the target pawn's current job
+                    // (CurJob.SetTarget(B, ...)) — so JobOnThing must only ever be reached after HasJobOnThing passes.
+                    bool hasJob;
+                    try
+                    {
+                        hasJob = scanner.HasJobOnThing(pawn, t);
+                    }
+                    catch (Exception e)
+                    {
+                        // Same defensive rule as JobOnThing below: a throwing gate must skip the candidate, not kill the branch.
+                        Log.ErrorOnce("[AIColonists] HasJobOnThing threw for " + t.def.label + " via " + scanner.GetType().Name + ": " + e.Message, 4816);
+                        continue;
+                    }
+                    if (!hasJob) continue;
+
                     Job job;
                     try
                     {
@@ -198,7 +219,14 @@ namespace AIColonists.ThinkTree
                 if ((other.Position - pawn.Position).LengthHorizontal > 15f) continue;
                 if (!GenSight.LineOfSight(pawn.Position, other.Position, pawn.Map)) continue;
 
-                string name = other.LabelCap.ToLower();
+                // 2026-11-16 (live observation, §23.4): keep the name CAPITALIZED — "Go talk to cook." read as a verb and the
+                // model conflated the colonist named Cook with the act of cooking in its inner voices. Names are names; the
+                // system prompt now says so explicitly too. LabelCap can throw on half-loaded pawns (ErrorOnce 4814 precedent) —
+                // a throwing label skips the candidate instead of killing the scan.
+                string name;
+                try { name = other.LabelCap; } catch { continue; }
+                if (string.IsNullOrEmpty(name)) continue;
+
                 string color = "";
                 var rv = mind != null ? mind.GetRelationship(other.ThingID) : null;
                 if (rv != null)

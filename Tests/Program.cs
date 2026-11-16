@@ -116,6 +116,7 @@ namespace AIColonists.Tests
             Test_Phase2IdentityPrefix();
             Test_Phase2Hold();
             Test_WarmUpColdStart(); // one-shot cold-start warmup (Ollama cancel-aborts-load finding, §22.7)
+            Test_MainThreadLog(); // worker-thread log marshaling (in-game log window race, §23.3)
             Test_DraftPatch();
             Test_InteractionPatch(); // needs EnableAI=true
             Test_ThoughtPatch();     // needs EnableAI=true
@@ -428,6 +429,25 @@ namespace AIColonists.Tests
             Check(opts.Any(o => o.jobDef == JobDefOf.Ingest), "throwing JobOnThing: unrelated options (food) still offered");
             TestRig.WorkJobOnThing = TestRig.DefaultWorkJobOnThing;
 
+            // 2026-11-16 fix (TEST-RESULTS.md §23): VANILLA'S TWO-STAGE CONTRACT. PotentialWorkThingsGlobal is an UNFILTERED
+            // candidate stream — decompiled 1.6: WorkGiver_GatherAnimalBodyResources returns ALL faction pawns (humans
+            // included) and WorkGiver_Teach returns EVERY player-faction pawn; the real per-target validation lives in
+            // HasJobOnThing (animal+comp check, NeedsTeacher + desk-spot reservation). Before this fix the scanner called
+            // JobOnThing directly, producing Milk jobs targeting human colonists (vanilla NRE in JobDriver_Milk's toils) and
+            // Lessongiving jobs built from the target's CURRENT job (IndexOutOfRange in TryMakePreToilReservations when the
+            // "desk" was a bed at the map edge). The gate must refuse before JobOnThing is ever reached.
+            TestRig.WorkHasJobOnThing = (p, t) => false; // e.g. WorkGiver_Milk.HasJobOnThing(human) → !(IsAnimal) → refused
+            opts = AffordanceScanner.Scan(pawn);
+            Check(!opts.Any(o => o.sensoryDescription.Contains("steel vein")), "HasJobOnThing=false: candidate refused, option not offered (milk→human / teach→adult gate)");
+            Check(opts.Any(o => o.jobDef == JobDefOf.Ingest), "HasJobOnThing=false: unrelated options (food) still offered");
+            TestRig.WorkHasJobOnThing = TestRig.DefaultWorkHasJobOnThing;
+
+            // Same defensive rule as JobOnThing: a throwing gate skips the candidate, never kills the scan (ErrorOnce 4816).
+            TestRig.WorkHasJobOnThing = (p, t) => throw new Exception("simulated vanilla HasJobOnThing NRE");
+            opts = AffordanceScanner.Scan(pawn); // must not throw
+            Check(!opts.Any(o => o.sensoryDescription.Contains("steel vein")), "throwing HasJobOnThing: candidate skipped, scan completes");
+            TestRig.WorkHasJobOnThing = TestRig.DefaultWorkHasJobOnThing;
+
             // social: near vs far
             var other = MakePawn("p2", map); other.LabelCap = "Bob"; other.Position = new IntVec3(5, 0);
             opts = AffordanceScanner.Scan(pawn);
@@ -688,8 +708,8 @@ namespace AIColonists.Tests
             comp.IntentBuffer.Push("j1", new QueuedDesire(MakeOpt(1, "work", new JobDef(), veinJ), "time to dig"));
             var workJob = new ExposedJobGiver().Give(pawn);
             Check(workJob != null && workJob.def != null, "deposited WORK desire consumed as Job (no longer silently discarded)");
-            Check(Log.Messages.Any(m => m.Contains("[job started]") && m.Contains("\"work\"")),
-                "[job started] log line quotes the sensory phrasing (T4 decision→execution correlation)");
+            Check(Log.Messages.Any(m => m.Contains("[job started]") && m.Contains("\"work\"") && m.Contains("(StubJob)")),
+                "[job started] log line quotes the sensory phrasing + resolved JobDef (T4 decision→execution correlation, §23.5 attribution)");
 
             var gate = new ExposedGate();
             pawn.Drafted = true;
@@ -915,6 +935,41 @@ namespace AIColonists.Tests
                 Check(!real.WarmUpAsync().Result, "real client: warmup against a closed port returns false (silent no-op)");
             }
             finally { AIColonistMod.Settings.Layer1ServerUrl = savedUrl; }
+        }
+
+        // ------------------------------------------------------------ Phase 2: worker-thread log marshaling (§23.3)
+        static void Test_MainThreadLog()
+        {
+            Section("Worker-thread log marshaling (in-game log window race, §23.3)");
+            MainThreadLog.Drain(); // flush residue from earlier tests (the warmup test's port-9 skip line now routes here too)
+            Log.Messages.Clear();
+            Log.Errors.Clear();
+
+            // Enqueue from a background thread — the lines must NOT reach Verse.Log until the main-thread drain runs.
+            var task = Task.Run(() =>
+            {
+                MainThreadLog.Message("[AIColonists] worker line");
+                MainThreadLog.Error("[AIColonists] worker error");
+                MainThreadLog.ErrorOnce("[AIColonists] worker once", 4901);
+                MainThreadLog.ErrorOnce("[AIColonists] worker once", 4901); // duplicate key — deduped at drain time
+            });
+            task.Wait();
+
+            Check(Log.Messages.Count == 0, "worker-thread Message is deferred (not logged until the main-thread drain)");
+            Check(Log.Errors.Count == 0, "worker-thread Error/ErrorOnce are deferred too");
+            // The queue holds RAW lines — ErrorOnce dedupe is applied at drain time by Verse.Log itself (process-global keys).
+            Check(MainThreadLog.PendingCount == 4, "four raw lines pending for the drain (dedupe happens at drain time)");
+
+            MainThreadLog.Drain(); // stands in for AIColonistGameComponent.MapComponentTick (main thread)
+
+            Check(Log.Messages.Contains("[AIColonists] worker line"), "Message line delivered on drain");
+            Check(Log.Errors.Contains("[AIColonists] worker error"), "Error line delivered on drain");
+            Check(Log.Errors.Count(m => m.Contains("worker once")) == 1, "ErrorOnce dedupe applied at drain time (duplicate key logged once)");
+            Check(MainThreadLog.PendingCount == 0, "queue empty after drain");
+
+            int after = Log.Messages.Count + Log.Errors.Count;
+            MainThreadLog.Drain();
+            Check(Log.Messages.Count + Log.Errors.Count == after, "empty drain is a no-op");
         }
 
         // ------------------------------------------------------------ draft patch (Spec §6.3)
