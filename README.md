@@ -134,6 +134,30 @@ No-game test harness (compiles every real source file against 1.6-fidelity stubs
 dotnet run --project Tests     # → 305 checks, all must pass
 ```
 
+### With Nix (Linux)
+
+```sh
+nix build            # sandboxed: result/ is the complete mod folder — copy or symlink it into RimWorld/Mods/
+nix run .#build      # unsandboxed: mod DLL → Assemblies/; uses $RIMWORLD_DIR, default ~/.local/share/Steam/steamapps/common/RimWorld
+nix run .#test       # no-game harness from the working tree
+nix flake check      # same harness, sandboxed (Tests/ NuGet deps pinned in nix/deps.json)
+nix develop          # shell with the .NET SDK, for plain `dotnet ...` commands
+```
+
+`nix build` compiles against copies of the game's `Assembly-CSharp.dll` and `UnityStubs.dll` in the Nix store. Those
+files are proprietary, so add your own copies once (Nix prints this command if they're missing):
+
+```sh
+nix-store --add-fixed sha256 ~/.local/share/Steam/steamapps/common/RimWorld/{Assembly-CSharp,UnityStubs}.dll
+```
+
+`flake.nix` pins their hashes to RimWorld 1.7.5014 rev1195. After a game update, re-add the files and update the hashes
+(`nix hash file --sri <file>`).
+
+The csproj auto-detects the game layout: Windows (`RimWorldWin64_Data/Managed`), Linux/Unity (`RimWorldLinux_Data/Managed`),
+or the Waylith/CoreCLR build (DLLs in the install root, Unity types in `UnityStubs.dll`). A DLL built against a Waylith
+install references `UnityStubs` instead of `UnityEngine.*`, so don't ship it to Unity-based installs.
+
 ## Project structure
 
 ```
