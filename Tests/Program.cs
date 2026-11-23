@@ -1246,6 +1246,23 @@ namespace AIColonists.Tests
             tab.SelPawn = enemy;
             Check(!tab.IsVisible, "hidden for non-player-faction pawns");
 
+            var wild = MakePawn("tw");
+            wild.Faction = null; // wild men, factionless refugees, and their corpses (live NRE 2026-11-22)
+            tab.SelPawn = wild;
+            bool wildVisible = true;
+            try { wildVisible = tab.IsVisible; } catch (NullReferenceException) { }
+            Check(!wildVisible, "factionless pawn: hidden, no NullReferenceException");
+
+            // Same unguarded Faction.IsPlayer in the social-option scan: a wild man near a colonist broke its Layer 1 scan.
+            var scanMap = new Map();
+            var colonist = MakePawn("tsc", scanMap); colonist.LabelCap = "Alice"; colonist.Position = new IntVec3(0, 0);
+            var friend = MakePawn("tsf", scanMap); friend.LabelCap = "Bob"; friend.Position = new IntVec3(2, 0);
+            var wildMan = MakePawn("tsw", scanMap); wildMan.LabelCap = "Wild man"; wildMan.Faction = null; wildMan.Position = new IntVec3(1, 0);
+            List<AffordanceOption> scanned = null;
+            try { scanned = AffordanceScanner.Scan(colonist); } catch (NullReferenceException) { }
+            Check(scanned != null && scanned.Any(o => o.sensoryDescription.StartsWith("Go talk to Bob")) && !scanned.Any(o => o.sensoryDescription.Contains("Wild man")),
+                "factionless pawn nearby: social scan survives, never offered as a colonist to talk to");
+
             tab.SelPawn = null;
             Check(!tab.IsVisible, "hidden when no pawn selected");
 
