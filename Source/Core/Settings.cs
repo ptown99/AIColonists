@@ -47,8 +47,32 @@ namespace AIColonists.Core
         public int Layer2MaxOutputTokens = 150;
         public int Layer3MaxOutputTokens = 350;
 
+        // Sends reasoning_effort:"none" on every request. Reasoning models (live: Inkling 2 mini via OpenRouter) otherwise
+        // spend the whole small output budget thinking and return no content. Off by default: OpenAI's own API rejects
+        // the field for non-reasoning models; llama-server ignores it.
+        public bool DisableReasoning = false;
+
         // Inference timeout — a hung server must never wedge the intent pipeline (Spec §9 Phase 1).
         public int RequestTimeoutMs = 3000;
+
+        /// <summary>Settings page "Reset tuning to defaults": sampling, token budgets and dual-clock timing go back to the
+        /// field initializers above. Switches, URLs, models and the timeout are left alone: they describe the player's
+        /// server setup (presets own models + timeout), not tuning.</summary>
+        public void ResetTuningToDefaults()
+        {
+            var d = new Settings();
+            BaseTemperature = d.BaseTemperature;
+            MinP = d.MinP;
+            Layer1MaxOutputTokens = d.Layer1MaxOutputTokens;
+            Layer2MaxOutputTokens = d.Layer2MaxOutputTokens;
+            Layer3MaxOutputTokens = d.Layer3MaxOutputTokens;
+            Layer1MinGameTicks = d.Layer1MinGameTicks;
+            Layer1MinRealSeconds = d.Layer1MinRealSeconds;
+            Layer2MinGameTicks = d.Layer2MinGameTicks;
+            Layer2MinRealSeconds = d.Layer2MinRealSeconds;
+            Layer3MinGameTicks = d.Layer3MinGameTicks;
+            Layer3MinRealSeconds = d.Layer3MinRealSeconds;
+        }
 
         public override void ExposeData()
         {
@@ -72,6 +96,7 @@ namespace AIColonists.Core
             Scribe_Values.Look(ref Layer2MaxOutputTokens, "layer2MaxOutputTokens", 150);
             Scribe_Values.Look(ref Layer3MaxOutputTokens, "layer3MaxOutputTokens", 350);
             Scribe_Values.Look(ref RequestTimeoutMs, "requestTimeoutMs", 3000);
+            Scribe_Values.Look(ref DisableReasoning, "disableReasoning", false);
         }
     }
 }
