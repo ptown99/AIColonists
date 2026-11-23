@@ -11,3 +11,7 @@ Source/local.build.props
 .vs/
 .idea/
 *.user
+
+# Nix
+result
+result-*
