@@ -115,6 +115,7 @@ namespace AIColonists.Tests
             Test_Phase2MoodAndIntellect();
             Test_Phase2TraitSeeding();
             Test_Phase2IdentityPrefix();
+            Test_PersonaPrompts(); // 2026-11-22: short names, title, backstory prose, voice lines, babies, Layer 2/3 wording
             Test_Phase2Hold();
             Test_WarmUpColdStart(); // one-shot cold-start warmup (Ollama cancel-aborts-load finding, §22.7)
             Test_MainThreadLog(); // worker-thread log marshaling (in-game log window race, §23.3)
@@ -141,6 +142,8 @@ namespace AIColonists.Tests
             await Test_Layer2ServerDownResilienceAsync();
             await Test_TransportSingleFlightAsync();      // Mono concurrent-send fix: gate serializes all layers
             await Test_TransportRetryOnSendFailureAsync(); // one retry on transport failure only
+            await Test_ProviderTestAsync(); // settings "Test providers" button: probe outcomes + tester + dialog smoke
+            Test_SettingsPage(); // every Settings field has a control; scrolling; reset-to-defaults scope
             Test_MemoryThoughtDefs(); // mood bridge: def wiring + calibration (no code — granted by vanilla machinery)
             Test_UiSmoke();
 
@@ -263,11 +266,18 @@ namespace AIColonists.Tests
         static void Test_MoodEntropy()
         {
             Section("Mood → entropy mapping (Spec §3.2)");
-            Check(MoodEntropyMapper.TempFloor == 0.5f && MoodEntropyMapper.TempCeiling == 0.85f, "hard bounds [0.50, 0.85] per spec");
             Check(Math.Abs(MoodEntropyMapper.MoodToTemperature(0.65f) - 0.60f) < 1e-4f, "content tier: 0.65 + (-0.05) = 0.60");
-            Check(MoodEntropyMapper.MoodToTemperature(0.25f) == MoodEntropyMapper.TempFloor, "low base clamps to floor 0.50");
-            Check(MoodEntropyMapper.MoodToTemperature(1.0f) == MoodEntropyMapper.TempCeiling, "high base clamps to ceiling 0.85");
-            Check(Math.Abs(MoodEntropyMapper.MoodToTopP() - 0.85f) < 1e-4f, "content top_p = 0.85");
+            Check(Math.Abs(MoodEntropyMapper.MoodToTemperature(1.0f) - 0.95f) < 1e-4f,
+                "relative offset: a base of 1.0 is honored (was silently capped at 0.85)");
+            Check(MoodEntropyMapper.MoodToTemperature(0.02f) == 0f && MoodEntropyMapper.MoodToTemperature(1.95f, 0.1f) == 2f,
+                "clamped only to the API's legal range [0, 2]");
+            // Base 0.65 (the old default): the old [0.50, 0.85] band falls out exactly, so players who kept 0.65 see no change.
+            Check(Math.Abs(MoodEntropyMapper.MoodToTemperature(0.65f, 0.2f) - 0.50f) < 1e-4f && Math.Abs(MoodEntropyMapper.MoodToTemperature(0.65f, 0.1f) - 0.85f) < 1e-4f,
+                "base 0.65 spans exactly the old 0.50-0.85 band");
+            Check(new Settings().BaseTemperature == 1.0f && new Settings().MinP == 0.05f && new Settings().Layer3Temperature == 0.5f,
+                "defaults: temperature 1.0 / min_p 0.05 (Inkling guidance), Layer 3 cooler at 0.5");
+            Check(new Layer1Request().topP == 1.0f && new Layer2Request().topP == 1.0f && new Layer3Request().topP == 1.0f,
+                "top_p off (1.0) on every layer: min_p trims the tail");
         }
 
         // ------------------------------------------------------------ intent buffer (Spec §6.2)
@@ -672,14 +682,14 @@ namespace AIColonists.Tests
             };
 
             string sys = PrefixPromptBuilder.BuildSystemPrompt(snap);
-            Check(sys.Contains("# IDENTITY (STATIC PREFIX - KV CACHED)") && !sys.Contains("["),
-                "system prompt: static prefix zone, no unreplaced placeholders");
+            Check(sys.StartsWith("You are a colonist") && !sys.Contains("[") && !sys.Contains("KV CACHED") && !sys.Contains("STATIC PREFIX"),
+                "system prompt: identity first, no unreplaced placeholders, no engineering labels in model-facing text");
 
             string usr = PrefixPromptBuilder.BuildUserPrompt(snap);
             Check(usr.Contains("[1] Eat the hot simple meal nearby.") && usr.Contains("[2] Lie down on the bed.") && usr.Contains("[3] Stand still"),
                 "user prompt: numbered affordances in order 1..N");
-            Check(usr.Contains("- Ate at the table.") && usr.Contains("- (nothing in particular)"),
-                "episodic lines joined; empty zone renders dash placeholder");
+            Check(usr.Contains("- Ate at the table.") && usr.Contains("## PEOPLE NEARBY\n- no one") && !usr.Contains("DYNAMIC SUFFIX"),
+                "episodic lines joined; empty people zone reads \"no one\"; no engineering labels");
         }
 
         // ------------------------------------------------------------ dual-clock gate (Spec §3.3)
@@ -826,19 +836,17 @@ namespace AIColonists.Tests
             Check(MoodEntropyMapper.MoodTier(-1f) == "content" && MoodEntropyMapper.MoodTier(1.5f) == "content",
                 "out-of-range / unknown mood falls back to the content baseline");
 
-            // Float overloads for the worker thread: base + tier offset, hard-clamped to [0.50, 0.85].
+            // Float overloads for the worker thread: base + tier offset, relative (clamped only to [0, 2]).
             Check(Math.Abs(MoodEntropyMapper.MoodToTemperature(0.7f, 0.9f) - 0.75f) < 1e-4f, "ecstatic: +0.05 → 0.75");
             Check(Math.Abs(MoodEntropyMapper.MoodToTemperature(0.7f, 0.2f) - 0.55f) < 1e-4f, "depressed: -0.15 → 0.55");
-            Check(MoodEntropyMapper.MoodToTemperature(0.7f, 0.1f) == MoodEntropyMapper.TempCeiling, "furious: +0.20 clamps to ceiling 0.85");
-            Check(Math.Abs(MoodEntropyMapper.MoodToTopP(0.9f) - 0.92f) < 1e-4f, "ecstatic top_p 0.92");
-            Check(Math.Abs(MoodEntropyMapper.MoodToTopP(0.2f) - 0.80f) < 1e-4f, "depressed top_p 0.80");
-            Check(Math.Abs(MoodEntropyMapper.MoodToTopP(-1f) - 0.85f) < 1e-4f, "unknown mood top_p = content baseline 0.85");
+            Check(Math.Abs(MoodEntropyMapper.MoodToTemperature(0.7f, 0.1f) - 0.90f) < 1e-4f, "furious: +0.20 → 0.90 (no 0.85 cap any more)");
 
             // Intellect (SkillDefOf.Intellectual level in 1.6) → cadence + colony-horizon tiers.
             Check(PrefixPromptBuilder.CadenceRuleFor(-1).Contains("plain"), "unknown intellect: neutral cadence");
             Check(PrefixPromptBuilder.CadenceRuleFor(3).Contains("blunt"), "low (<5): blunt cadence");
-            Check(PrefixPromptBuilder.CadenceRuleFor(7).Contains("notice details"), "mid (5-9): detail-pausing cadence");
-            Check(PrefixPromptBuilder.CadenceRuleFor(12).Contains("layered"), "high (>=10): layered cadence");
+            Check(PrefixPromptBuilder.CadenceRuleFor(7).Contains("practical details"), "mid (5-9): practical-detail cadence");
+            Check(PrefixPromptBuilder.CadenceRuleFor(12).Contains("weigh consequences") && PrefixPromptBuilder.CadenceRuleFor(12).Contains("plain words"),
+                "high (>=10): weighs consequences, still in plain words");
             Check(PrefixPromptBuilder.ColonyHorizonFor(3) == "", "low intellect: no colony horizon line");
             Check(PrefixPromptBuilder.ColonyHorizonFor(7).Contains("loose sense"), "mid intellect: loose settlement awareness");
             Check(PrefixPromptBuilder.ColonyHorizonFor(12).Contains("wider state"), "high intellect: tracks the wider state");
@@ -892,15 +900,15 @@ namespace AIColonists.Tests
             var snap1 = SensoryFramingBuilder.CaptureMainThreadSnapshot(pawn, new List<AffordanceOption>());
             Check(snap1.AgeYears == 42 && snap1.ColonyName == "Home" && snap1.IntellectualLevel == 7,
                 "identity capture: age / colony name / intellect level from pawn + map");
-            Check(snap1.TraitsLine.Contains("stoic (clearly)") && snap1.TraitsLine.Contains("quick-tempered (deeply)"),
-                "trait line: lower-cased label + degree descriptor (mildly/clearly/deeply)");
+            Check(snap1.TraitsLine == "Others would describe you as stoic and quick-tempered.",
+                "trait line: plain lower-cased trait labels (spectrum labels already name their degree)");
             Check(snap1.SkillsLine == "You are known around here for your mining and cooking.",
                 "skill line: top-2 skill NAMES only — levels excluded so the cached prefix stays byte-stable");
 
             string sys1 = PrefixPromptBuilder.BuildSystemPrompt(snap1);
-            Check(sys1.Contains("You are Alice, age 42, living in the settlement of Home."), "prefix: real name/age/colony line");
+            Check(sys1.StartsWith("You are Alice, age 42. You live in the settlement of Home."), "prefix: real name/age/colony line (no title known)");
             Check(!sys1.Contains("[") && !sys1.Contains("a colonist"), "prefix: no unreplaced placeholders, no generic fallback for a known pawn");
-            Check(sys1.Contains("- Values: stoic") && sys1.Contains("- Dislikes: quick-tempered"),
+            Check(sys1.Contains("- Lately you've been more and more: stoic") && sys1.Contains("- Less and less: quick-tempered"),
                 "values/fears from continuous weights (seeded 0.65 / 0.2 cross the 0.55 / 0.35 thresholds)");
 
             // KV-cache byte stability: an unchanged pawn must produce a byte-identical prefix on the next capture.
@@ -912,8 +920,8 @@ namespace AIColonists.Tests
             mind.traitWeights["quick-tempered"] = 0.6f; // drift pushes it over the value threshold
             var snap3 = SensoryFramingBuilder.CaptureMainThreadSnapshot(pawn, new List<AffordanceOption>());
             string sys3 = PrefixPromptBuilder.BuildSystemPrompt(snap3);
-            Check(sys3 != sys1 && sys3.Contains("- Values: stoic, quick-tempered") && sys3.Contains("- Dislikes: pain, hunger"),
-                "prefix updates when drift crosses the 0.55 threshold (aversion falls back to defaults)");
+            Check(sys3 != sys1 && sys3.Contains("- Lately you've been more and more: stoic, quick-tempered") && !sys3.Contains("Less and less"),
+                "prefix updates when drift crosses the 0.55 threshold (empty aversions: line omitted, no made-up defaults)");
 
             // Negative mood thoughts → first-person grudge prose (Appendix A).
             var other = MakePawn("id2", map); other.LabelCap = "Bob";
@@ -924,6 +932,118 @@ namespace AIColonists.Tests
                 "negative mood thought → first-person grudge line (zero mechanical terms)");
 
             Find.CurrentMap = null; // restore — other tests assume no settlement
+        }
+
+        // ------------------------------------------------------------ 2026-11-22 persona rework
+        static void Test_PersonaPrompts()
+        {
+            Section("Persona prompts: names, title, backstory, voice, babies (2026-11-22 live review)");
+            var map = new Map();
+            map.Parent = new RimWorld.Planet.Settlement { Name = "Esbium" };
+            Find.CurrentMap = map;
+
+            // Real 1.7 label shapes: LabelCap = name + short title in a color tag; LabelShort = just the name.
+            var paulo = MakePawn("pp1", map);
+            paulo.LabelCap = "Paulo<color=#999999FF>, Dude</color>"; paulo.LabelShort = "Paulo";
+            paulo.ageTracker.AgeBiologicalYears = 34;
+            paulo.story.TitleCap = "Dreaded dude";
+            paulo.story.Childhood = new BackstoryDef { description = "[PAWN_nameDef] grew up on a glitterworld and hated it.", fullDescription = "Paulo grew up on a <b>glitterworld</b> and hated it.\n\nShooting: +3\nCooking disabled" };
+            // Vanilla DreadedDude58: the prose itself has a blank line between its two paragraphs.
+            paulo.story.Adulthood = new BackstoryDef
+            {
+                description = "[PAWN_nameDef] and [PAWN_possessive] crew of misfits found the fountain of youth.\n\nThere's even a religion about them.",
+                fullDescription = "Paulo and his crew of misfits found the fountain of youth.\n\nThere's even a religion about them.\n\nSocial: +4\nDumb labor disabled",
+            };
+            paulo.story.traits.allTraits.Add(new Trait { LabelCap = "Abrasive", def = new TraitDef { defName = "Abrasive" } });
+            paulo.story.traits.allTraits.Add(new Trait { LabelCap = "Pessimist", Degree = -1, def = new TraitDef { defName = "NaturalMood" } });
+            paulo.story.traits.allTraits.Add(new Trait { LabelCap = "Misogynist", def = new TraitDef { defName = "DislikesWomen" } });
+            paulo.Position = new IntVec3(0, 0);
+
+            var albina = MakePawn("pp2", map);
+            albina.LabelCap = "Albina<color=#999999FF>, Forester</color>"; albina.LabelShort = "Albina";
+            albina.story.TitleCap = "Urbworld urchin";
+            albina.Position = new IntVec3(3, 0);
+
+            var joakim = MakePawn("pp3", map);
+            joakim.LabelCap = "Joakim<color=#999999FF>, Newborn</color>"; joakim.LabelShort = "Joakim";
+            joakim.DevelopmentalStage = DevelopmentalStage.Newborn;
+            joakim.Position = new IntVec3(2, 0);
+
+            // Names: short names only, no titles-as-people, no markup.
+            Check(PawnText.ShortName(albina) == "Albina" && PawnText.ShortName(new Pawn { LabelCap = "X<color=#fff>, Y</color>" }) == "X, Y",
+                "ShortName: LabelShort, with any rich-text tags stripped");
+            var snap = SensoryFramingBuilder.CaptureMainThreadSnapshot(paulo, AffordanceScanner.Scan(paulo));
+            string sys = PrefixPromptBuilder.BuildSystemPrompt(snap);
+            string usr = PrefixPromptBuilder.BuildUserPrompt(snap);
+            Check(sys.StartsWith("You are Paulo, age 34. People know you as a dreaded dude. You live in the settlement of Esbium."),
+                "identity line: short name, age, FULL title with article (not the short \"Dude\"), colony");
+            Check(!sys.Contains("<") && !usr.Contains("<color") && !usr.Contains("Forester") && !usr.Contains("Newborn"),
+                "no rich-text markup or short titles anywhere in the Layer 1 prompt");
+            Check(usr.Contains("- Albina.") && usr.Contains("Go talk to Albina."), "nearby + social option use the short name");
+
+            // Backstories: the game's own prose, without the skill/work-disable tail, tags stripped.
+            Check(sys.Contains("## YOUR PAST\nGrowing up: Paulo grew up on a glitterworld and hated it.\nSince then: Paulo and his crew of misfits found the fountain of youth. There's even a religion about them."),
+                "YOUR PAST: childhood + adulthood prose from the game's backstories, multi-paragraph prose kept whole");
+            Check(!sys.Contains("Shooting") && !sys.Contains("disabled") && !sys.Contains("Social: +4"), "backstory: the game's skill/work-disable tail is cut");
+            var longStory = new BackstoryDef { fullDescription = new string('x', 1000) };
+            Check(PawnText.Story(longStory, paulo).Length <= 421 && PawnText.Story(longStory, paulo).EndsWith("…"), "backstory: capped to keep the prefix small");
+            Check(PawnText.Story(null, paulo) == "", "missing backstory (children have no adulthood): empty, no throw");
+
+            // Voice lines from real trait defNames; bigoted traits deliberately get none.
+            Check(sys.Contains("## HOW YOU THINK AND TALK\n- You're blunt to the point of rude") && sys.Contains("- You expect the worst and grumble about it."),
+                "voice: Abrasive + NaturalMood -1 (pessimist) become how-you-talk lines");
+            Check(PawnText.VoiceFor("DislikesWomen", 0) == null && PawnText.VoiceFor("NaturalMood", 1) != null && PawnText.VoiceFor("Beauty", 2) == null,
+                "voice table: keyed by defName+degree; no line for misogynist or for appearance traits");
+            Check(sys.Contains("under 30 words") && sys.Contains("No poetic or therapy-style language"), "explicit plain-speech + length rule");
+            Check(sys.Contains("Others would describe you as abrasive, pessimist and misogynist."), "trait list stays factual (all traits listed)");
+            Check(PawnText.WithArticle("urbworld urchin") == "an urbworld urchin" && PawnText.WithArticle("dreaded dude") == "a dreaded dude", "a/an article");
+
+            // Babies: out of every layer, never a conversation partner, still visibly present.
+            Check(PawnText.IsBaby(joakim) && !PawnText.IsBaby(albina), "IsBaby: newborn/baby developmental stages");
+            Check(usr.Contains("- Joakim (a baby).") && !usr.Contains("talk to Joakim"), "baby: shown as present, never offered as someone to talk to");
+            Check(!new ExposedGate().IsSatisfied(joakim), "baby: Layer 1 gate closed");
+            Check(!AreaBatcher.BuildBatches(map).Values.Any(b => b.Contains(joakim)), "baby: excluded from Layer 2 room batches");
+
+            // Layer 2 roster + rules.
+            string roster = Layer2PromptBuilder.BuildUserPrompt(new List<Pawn> { paulo, albina }, null);
+            Check(roster.Contains("- Paulo (dreaded dude): ") && roster.Contains("- Albina (urbworld urchin): ") && !roster.Contains("<color"),
+                "Layer 2 roster: short name + full title in parentheses, no markup");
+            string l2sys = Layer2PromptBuilder.BuildSystemPrompt();
+            Check(l2sys.Contains("name BEFORE the parentheses") && !l2sys.Contains("KV CACHED") && l2sys.Contains("plain everyday speech"),
+                "Layer 2 rules: reply with the bare name; plain speech; no engineering labels");
+
+            // Layer 3: knows who it belongs to, asks for concrete memories.
+            string l3 = Layer3PromptBuilder.BuildSystemPrompt("Paulo", "dreaded dude", "Others would describe them as abrasive.");
+            Check(l3.StartsWith("You are the quiet subconscious of Paulo, a dreaded dude. Others would describe them as abrasive. While"),
+                "Layer 3: identity (name, title, nature) in the subconscious prompt");
+            Check(l3.Contains("one concrete sentence about a specific person, place, thing or habit") && l3.Contains("Not a general statement about feelings")
+                && !l3.Contains("KV CACHED"), "Layer 3: semantic memories steered concrete; no engineering labels");
+            Check(Layer3PromptBuilder.BuildSystemPrompt("Paulo").StartsWith("You are the quiet subconscious of Paulo. You experience") == false
+                && Layer3PromptBuilder.BuildSystemPrompt("Paulo").StartsWith("You are the quiet subconscious of Paulo. While"),
+                "Layer 3: title/nature optional (old call shape still renders cleanly)");
+            Check(new ColonistMindState(albina).pawnName == "Albina", "mind state stores the short name (Layer 3 prompt name)");
+
+            // Anti-repeat: the last two thoughts go in the dynamic zone with a don't-repeat rule.
+            Check(!usr.Contains("WHAT YOU WERE JUST THINKING"), "no recent thoughts yet: no anti-repeat block");
+            var recent = new List<string>();
+            AIColonistGameComponent.PushRecentThought(recent, "Stomach's screaming.");
+            AIColonistGameComponent.PushRecentThought(recent, "Stomach's screaming."); // exact repeat of the newest: skipped
+            AIColonistGameComponent.PushRecentThought(recent, "  ");                   // blank: skipped
+            AIColonistGameComponent.PushRecentThought(recent, "Nicole can wait.");
+            AIColonistGameComponent.PushRecentThought(recent, "Eat first, talk later.");
+            Check(recent.Count == 2 && recent[0] == "Nicole can wait." && recent[1] == "Eat first, talk later.",
+                "recent thoughts: newest two kept, oldest first; blanks and back-to-back repeats skipped");
+            snap.RecentThoughts = recent;
+            string usr2 = PrefixPromptBuilder.BuildUserPrompt(snap);
+            Check(usr2.Contains("## WHAT YOU WERE JUST THINKING\n- \"Nicole can wait.\"\n- \"Eat first, talk later.\"\nYour next thought is new: don't repeat or reword these.")
+                && usr2.IndexOf("WHAT YOU WERE JUST THINKING") > usr2.IndexOf("## ON YOUR MIND") && usr2.IndexOf("WHAT YOU WERE JUST THINKING") < usr2.IndexOf("## PEOPLE NEARBY"),
+                "anti-repeat block: recent thoughts quoted after ON YOUR MIND with an explicit rule");
+            Check(PrefixPromptBuilder.BuildSystemPrompt(snap) == sys, "recent thoughts never touch the cached system prefix");
+            Check(usr2.EndsWith("Give your fleeting inner thought (new words, not what you were just thinking), anything you mutter aloud, and the number of what you do.")
+                && usr.EndsWith("Give your fleeting inner thought, anything you mutter aloud, and the number of what you do."),
+                "final instruction restates the no-repeat rule only when there are recent thoughts");
+
+            Find.CurrentMap = null;
         }
 
         // ------------------------------------------------------------ Phase 2: AI-first hold (backlog #8)
@@ -2042,6 +2162,197 @@ namespace AIColonists.Tests
             Check(accepts >= 2, "a fresh connection was made after the first failure (the retry actually retried)");
 
             server.Stop();
+        }
+
+        /// <summary>Raw HTTP response with an arbitrary status line (for error-path probes).</summary>
+        static byte[] HttpRawResponse(string statusLine, string body)
+        {
+            string head = "HTTP/1.1 " + statusLine + "\r\nContent-Type: application/json\r\nContent-Length: "
+                + System.Text.Encoding.UTF8.GetByteCount(body) + "\r\nConnection: close\r\n\r\n";
+            return System.Text.Encoding.UTF8.GetBytes(head + body);
+        }
+
+        /// <summary>Serves exactly one canned response on a fresh loopback port, then stops. Returns (baseUrl, serverTask).</summary>
+        static (string, Task) ServeOnce(byte[] response)
+        {
+            int port = FreeLoopbackPort();
+            var server = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, port);
+            server.Start();
+            var t = Task.Run(async () =>
+            {
+                try
+                {
+                    using (var c = await server.AcceptTcpClientAsync())
+                    using (var st = c.GetStream())
+                    {
+                        DrainRequest(st);
+                        await st.WriteAsync(response, 0, response.Length);
+                    }
+                }
+                finally { server.Stop(); }
+            });
+            return ("http://127.0.0.1:" + port, t);
+        }
+
+        static async Task Test_ProviderTestAsync()
+        {
+            Section("Settings: Test providers button (probe, tester, dialog)");
+
+            // 1. Healthy server: ok + the reply text (think blocks stripped like real dispatches).
+            var (okUrl, okSrv) = ServeOnce(HttpOkResponse(ChatEnvelope("<think>hmm</think>OK")));
+            var okRes = await LlamaServerClient.TestProviderAsync(okUrl, "m", 80, timeoutMs: 5000);
+            await okSrv;
+            Check(okRes.ok && okRes.message == "OK", "healthy server: ok, reply 'OK' with <think> stripped (got: " + okRes.message + ")");
+            Check(okRes.latencyMs >= 0, "healthy server: latency measured");
+
+            // 2. Server answers with an error (e.g. Ollama's unknown-model 404): status + body surface verbatim.
+            var (e404Url, e404Srv) = ServeOnce(HttpRawResponse("404 Not Found", "{\"error\":\"model 'nope' not found\"}"));
+            var e404 = await LlamaServerClient.TestProviderAsync(e404Url, "nope", 80, timeoutMs: 5000);
+            await e404Srv;
+            Check(!e404.ok && e404.message.Contains("404") && e404.message.Contains("model 'nope' not found"),
+                "HTTP 404: failure carries the status and the server's own error (got: " + e404.message + ")");
+
+            // 3. Something that answers 200 but isn't a chat server (wrong port, e.g. a health endpoint or web UI).
+            var (oddUrl, oddSrv) = ServeOnce(HttpOkResponse("{\"status\":\"ok\"}"));
+            var odd = await LlamaServerClient.TestProviderAsync(oddUrl, "m", 80, timeoutMs: 5000);
+            await oddSrv;
+            Check(!odd.ok && odd.message.Contains("OpenAI-compatible"), "200 without chat content: flagged as not a chat server");
+
+            // 3b. Reasoning model that burns the whole budget thinking (live: Inkling 2 mini via OpenRouter at 16 tokens).
+            string burnt = "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"role\":\"assistant\",\"content\":null,\"reasoning\":\"The user asks\"}}],"
+                + "\"usage\":{\"completion_tokens\":16,\"completion_tokens_details\":{\"reasoning_tokens\":16}}}";
+            var (burntUrl, burntSrv) = ServeOnce(HttpOkResponse(burnt));
+            var burntRes = await LlamaServerClient.TestProviderAsync(burntUrl, "m", 16, timeoutMs: 5000);
+            await burntSrv;
+            Check(!burntRes.ok && burntRes.message.Contains("whole 16-token budget") && burntRes.message.Contains("reasoning model"),
+                "content:null + finish_reason length: explained as a reasoning model out of budget (got: " + burntRes.message + ")");
+
+            // 3c. Answers, but reports heavy reasoning usage (live: 58 of 80 tokens to say "OK").
+            string heavy = "{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"role\":\"assistant\",\"content\":\"OK\"}}],"
+                + "\"usage\":{\"completion_tokens\":60,\"completion_tokens_details\":{\"reasoning_tokens\":58}}}";
+            var (heavyUrl, heavySrv) = ServeOnce(HttpOkResponse(heavy));
+            var heavyRes = await LlamaServerClient.TestProviderAsync(heavyUrl, "m", 80, timeoutMs: 5000);
+            await heavySrv;
+            Check(heavyRes.ok && heavyRes.reasoningTokens == 58 && heavyRes.maxTokens == 80, "reasoning_tokens + budget carried on an ok result");
+
+            // 4. Nothing listening, and a URL missing its scheme: both come back as failures, never exceptions.
+            var down = await LlamaServerClient.TestProviderAsync("http://127.0.0.1:9", "m", 80, timeoutMs: 5000);
+            Check(!down.ok && down.message.StartsWith("unreachable"), "closed port: 'unreachable' failure (got: " + down.message + ")");
+            ProviderTestResult noScheme = null;
+            try { noScheme = await LlamaServerClient.TestProviderAsync("localhost:8091", "m", 80, timeoutMs: 5000); } catch { }
+            Check(noScheme != null && !noScheme.ok, "URL without http://: failure result, no exception");
+
+            // 4b. "Turn off model reasoning": every body carries reasoning_effort:"none" only when asked.
+            var l1Off = LlamaServerClient.BuildChatCompletionsJson(new Layer1Request { model = "m", optionCount = 2 });
+            var l1On = LlamaServerClient.BuildChatCompletionsJson(new Layer1Request { model = "m", optionCount = 2, disableReasoning = true });
+            var l2On = LlamaServerClient.BuildLayer2Json(new Layer2Request { model = "m", disableReasoning = true });
+            var l3On = LlamaServerClient.BuildLayer3Json(new Layer3Request { model = "m", disableReasoning = true });
+            Check(!l1Off.Contains("reasoning_effort"), "reasoning flag off: body unchanged (no reasoning_effort)");
+            Check(l1On.Contains(",\"reasoning_effort\":\"none\",") && l2On.Contains("\"reasoning_effort\":\"none\"") && l3On.Contains("\"reasoning_effort\":\"none\""),
+                "reasoning flag on: Layer 1/2/3 bodies all send reasoning_effort:\"none\"");
+            try { Newtonsoft.Json.Linq.JObject.Parse(l1On); Newtonsoft.Json.Linq.JObject.Parse(l2On); Newtonsoft.Json.Linq.JObject.Parse(l3On); Check(true, "reasoning flag on: bodies are still valid JSON"); }
+            catch (Exception ex) { Check(false, "reasoning flag on: bodies are still valid JSON (" + ex.Message + ")"); }
+
+            // 4c. Real dispatch hitting the live failure (content:null, budget spent reasoning): actionable error, not "malformed".
+            var (burnUrl, burnSrv) = ServeOnce(HttpOkResponse(burnt));
+            string dispatchErr = null;
+            try { await new LlamaServerClient(new Settings { Layer1ServerUrl = burnUrl, RequestTimeoutMs = 5000 }).RequestLayer1Async(new Layer1Request { model = "m", optionCount = 2 }); }
+            catch (Exception ex) { dispatchErr = ex.Message; }
+            await burnSrv;
+            Check(dispatchErr != null && dispatchErr.Contains("16 tokens went to reasoning") && dispatchErr.Contains("Turn off model reasoning") && !dispatchErr.Contains("Malformed"),
+                "dispatch with content:null + finish_reason length: error explains the reasoning budget and names the setting (got: " + dispatchErr + ")");
+
+            // 5. ProviderTester: snapshots settings, probes all three layers in order, formats status lines.
+            var s = new Settings
+            {
+                Layer1ServerUrl = "http://a", Layer1Model = "m1",
+                Layer2ServerUrl = "http://b", Layer2Model = "m2",
+                Layer3ServerUrl = "http://c", Layer3Model = "m3",
+                RequestTimeoutMs = 3000,
+            };
+            var order = new List<string>();
+            var tester = new ProviderTester(s, (url, model, maxTokens) =>
+            {
+                lock (order) order.Add(url + "|" + model + "|" + maxTokens);
+                if (url == "http://a") return Task.FromResult(ProviderTestResult.Ok(1200, "OK", 10, maxTokens));
+                if (url == "http://b") return Task.FromResult(ProviderTestResult.Ok(4500, "OK"));
+                return Task.FromResult(ProviderTestResult.Fail(5, "unreachable: refused"));
+            });
+            s.Layer1ServerUrl = "http://edited-after-click";
+            Check(!tester.Done && tester.StatusLine(tester.Entries[0]) == "waiting", "before Start: not done, entries waiting");
+            await tester.Start();
+            Check(tester.Done, "after Start completes: Done");
+            Check(string.Join(",", order) == "http://a|m1|80,http://b|m2|150,http://c|m3|350",
+                "probes ran once per layer, in order, with each layer's URL/model/token budget snapshotted at construction (got: " + string.Join(",", order) + ")");
+            Check(tester.StatusLine(tester.Entries[0]).StartsWith("OK in 1.2 s") && !tester.StatusLine(tester.Entries[0]).Contains("Slower"),
+                "fast OK: plain success line (got: " + tester.StatusLine(tester.Entries[0]) + ")");
+            Check(tester.StatusLine(tester.Entries[1]).Contains("Slower than your 3000 ms request timeout"),
+                "OK but slower than RequestTimeoutMs: warns real calls would time out");
+            Check(tester.StatusLine(tester.Entries[2]) == "FAILED: unreachable: refused", "failure: FAILED + message");
+            var heavyTester = new ProviderTester(s, (url, model, maxTokens) => Task.FromResult(ProviderTestResult.Ok(900, "OK", 58, 80)));
+            await heavyTester.Start();
+            Check(heavyTester.StatusLine(heavyTester.Entries[0]).Contains("Spent 58 of its 80 tokens reasoning"),
+                "OK but >half the budget on reasoning: warns real answers will get cut off");
+
+            Check(!tester.disableReasoning && new ProviderTester(new Settings { DisableReasoning = true }).disableReasoning,
+                "tester snapshots the reasoning flag (its real probe sends it, like real requests)");
+            var throwing = new ProviderTester(s, (url, model, maxTokens) => throw new InvalidOperationException("boom"));
+            await throwing.Start();
+            Check(throwing.Done && !throwing.Entries[0].result.ok, "a throwing probe becomes a FAILED entry, tester still finishes");
+
+            // 6. Dialog smoke: constructs, starts probing, draws pending + finished states without throwing.
+            var ds = new Settings { Layer1ServerUrl = "http://127.0.0.1:9", Layer2ServerUrl = "http://127.0.0.1:9", Layer3ServerUrl = "http://127.0.0.1:9" };
+            bool drew = true;
+            try
+            {
+                var dlg = new AIColonists.UI.Dialog_ProviderTest(ds);
+                dlg.DoWindowContents(new UnityEngine.Rect(0f, 0f, 664f, 400f));
+                System.Threading.Thread.Sleep(300); // closed port fails fast
+                dlg.DoWindowContents(new UnityEngine.Rect(0f, 0f, 664f, 400f));
+                Check(dlg.doCloseButton && dlg.InitialSize.y >= 450f, "dialog: has a close button and room for three result blocks");
+            }
+            catch (Exception e) { drew = false; Console.WriteLine("    " + e); }
+            Check(drew, "dialog: DoWindowContents draws pending and finished states without throwing");
+        }
+
+        static void Test_SettingsPage()
+        {
+            Section("Settings page: every field has a control, page scrolls, reset scope");
+            var fields = typeof(Settings).GetFields(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+            Check(fields.Length >= 20, "Settings exposes its fields (found " + fields.Length + ")");
+
+            // Poke mode: one draw where every control changes its bound value. Any field still at its default has no control.
+            var poked = new Settings();
+            var defaults = new Settings();
+            AIColonists.UI.SettingsWindow.Draw(new UnityEngine.Rect(0f, 0f, 860f, 560f), new Settings()); // warm-up: measures height
+            TestRig.UiPoke = true;
+            try { AIColonists.UI.SettingsWindow.Draw(new UnityEngine.Rect(0f, 0f, 860f, 560f), poked); }
+            finally { TestRig.UiPoke = false; }
+            var untouched = new List<string>();
+            foreach (var f in fields)
+                if (Equals(f.GetValue(poked), f.GetValue(defaults))) untouched.Add(f.Name);
+            Check(untouched.Count == 0, "every public Settings field is wired to a UI control (no control: " + string.Join(", ", untouched) + ")");
+
+            Check(AIColonists.UI.SettingsWindow.ContentHeight > 560f,
+                "content (" + AIColonists.UI.SettingsWindow.ContentHeight + " px) is taller than the dialog body, so the page scrolls");
+
+            AIColonists.UI.SettingsWindow.Draw(new UnityEngine.Rect(0f, 0f, 860f, 560f), null); // must not throw
+
+            // Reset tuning: sampling/tokens/timing back to defaults; switches, servers, models, timeout kept.
+            var s = new Settings
+            {
+                EnableAI = true, AIFirstJobPriority = false,
+                Layer1ServerUrl = "https://x", Layer1Model = "mx", RequestTimeoutMs = 12345,
+                BaseTemperature = 1.3f, MinP = 0.5f, Layer3Temperature = 1.9f, Layer1MaxOutputTokens = 999, Layer3MaxOutputTokens = 4000,
+                Layer2MinGameTicks = 60, Layer3MinRealSeconds = 5f,
+            };
+            s.ResetTuningToDefaults();
+            Check(s.BaseTemperature == defaults.BaseTemperature && s.MinP == defaults.MinP && s.Layer3Temperature == defaults.Layer3Temperature
+                && s.Layer1MaxOutputTokens == defaults.Layer1MaxOutputTokens && s.Layer3MaxOutputTokens == defaults.Layer3MaxOutputTokens
+                && s.Layer2MinGameTicks == defaults.Layer2MinGameTicks && s.Layer3MinRealSeconds == defaults.Layer3MinRealSeconds,
+                "reset: temperature, min_p, token budgets and timing back to defaults");
+            Check(s.EnableAI && !s.AIFirstJobPriority && s.Layer1ServerUrl == "https://x" && s.Layer1Model == "mx" && s.RequestTimeoutMs == 12345,
+                "reset: switches, URLs, models and timeout untouched");
         }
 
         // ------------------------------------------------------------ mood bridge defs (Spec §7.3 emotional shift)

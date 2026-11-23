@@ -28,17 +28,43 @@ namespace AIColonists.Inference
         Task<bool> WarmUpAsync();
     }
 
+    /// <summary>Outcome of one "Test providers" probe (LlamaServerClient.TestProviderAsync). Immutable, so the settings
+    /// dialog can read it from the UI thread while the probe runs on a worker thread.</summary>
+    public sealed class ProviderTestResult
+    {
+        public readonly bool ok;
+        public readonly long latencyMs;
+        public readonly string message;      // the model's reply when ok, otherwise what went wrong
+        public readonly int reasoningTokens; // tokens the model spent thinking (0 = none, or not reported)
+        public readonly int maxTokens;       // the output budget the probe ran with (0 = unknown)
+
+        private ProviderTestResult(bool ok, long latencyMs, string message, int reasoningTokens, int maxTokens)
+        {
+            this.ok = ok;
+            this.latencyMs = latencyMs;
+            this.message = message ?? "";
+            this.reasoningTokens = reasoningTokens;
+            this.maxTokens = maxTokens;
+        }
+
+        public static ProviderTestResult Ok(long latencyMs, string reply, int reasoningTokens = 0, int maxTokens = 0) =>
+            new ProviderTestResult(true, latencyMs, reply, reasoningTokens, maxTokens);
+        public static ProviderTestResult Fail(long latencyMs, string error, int reasoningTokens = 0, int maxTokens = 0) =>
+            new ProviderTestResult(false, latencyMs, error, reasoningTokens, maxTokens);
+    }
+
     /// <summary>Everything a Layer 1 call needs, captured on the main thread (Spec §5.1 / §7.1).</summary>
     public class Layer1Request
     {
         public string model;         // e.g., "qwen2.5-1.5b-instruct-q8_0"
         public string systemPrompt;  // static identity prefix (KV-cache friendly, Spec §2.3)
         public string userPrompt;    // dynamic suffix + numbered sensory affordances
-        public float temperature;    // mood-mapped, clamped to [0.50, 0.85] (Spec §3.2)
-        public float minP = 0.08f;   // guardrail: clips garbage tail tokens even when agitated
-        public float topP = 0.9f;    // mood-mapped (Spec §3.2 MOOD_ENTROPY_MAP)
+        public float temperature;    // base + mood offset (Spec §3.2), clamped to [0, 2]
+        public float minP = 0.05f;   // guardrail: clips garbage tail tokens even when agitated
+        public float topP = 1.0f;    // off: min_p trims the tail (2026-11-22; was mood-mapped 0.80-0.95)
         public int maxTokens = 80;   // Spec §3.1 Layer 1 budget
         public int optionCount = 0;  // number of affordances — sizes the impulse_id enum (Spec §7.2)
+        public bool disableReasoning; // sends reasoning_effort:"none" (Settings.DisableReasoning)
     }
 
     /// <summary>Parsed + validated Layer 1 output (matches GbnfSchemas.Layer1, Spec §7.2).</summary>
@@ -58,10 +84,11 @@ namespace AIColonists.Inference
         public string model;         // e.g., "qwen2.5-3b-instruct-q4_k_m" — ignored by single-model servers
         public string systemPrompt;  // static group-simulation prefix (byte-identical across calls → pure KV reuse)
         public string userPrompt;    // dynamic roster: names, moods, relationship color
-        public float temperature = 0.65f;
-        public float minP = 0.08f;
-        public float topP = 0.9f;
+        public float temperature = 1.0f;
+        public float minP = 0.05f;
+        public float topP = 1.0f;    // off: min_p trims the tail
         public int maxTokens = 150;  // Spec §3.1 Layer 2 budget (~120 tokens typical)
+        public bool disableReasoning; // sends reasoning_effort:"none" (Settings.DisableReasoning)
     }
 
     /// <summary>One decision for one colonist (Spec §7.3). FIELD NAMES ARE SNAKE_CASE ON PURPOSE — the server emits them verbatim.</summary>
@@ -88,10 +115,11 @@ namespace AIColonists.Inference
         public string model;         // e.g., "qwen2.5-14b-instruct-q4_k_m" — ignored by single-model servers
         public string systemPrompt;  // static per-colonist subconscious prefix (KV-cached per pawn)
         public string userPrompt;    // dynamic: raw episodic memories + current self-knowledge
-        public float temperature = 0.65f;
-        public float minP = 0.08f;
-        public float topP = 0.9f;
+        public float temperature = 1.0f;
+        public float minP = 0.05f;
+        public float topP = 1.0f;    // off: min_p trims the tail
         public int maxTokens = 350;  // Spec §3.1 Layer 3 budget (~250 tokens typical)
+        public bool disableReasoning; // sends reasoning_effort:"none" (Settings.DisableReasoning)
     }
 
     /// <summary>One relationship nudge (Spec §7.4). Server values are clamped to ±0.05 at apply time.</summary>

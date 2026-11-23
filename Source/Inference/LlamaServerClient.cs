@@ -134,6 +134,77 @@ namespace AIColonists.Inference
             }
         }
 
+        /// <summary>
+        /// "Test providers" button (settings dialog): one tiny chat completion against an endpoint, reporting reachability,
+        /// latency and the reply, or the error a real dispatch would hit. Goes through the same SendGate as real
+        /// dispatches (Mono concurrent-send fix) and uses the warmup's long timeout: the first call may include a cold
+        /// model load, and cancelling that mid-load makes Ollama abort it (§22.7). The caller compares latency against
+        /// the configured RequestTimeoutMs. Never throws: every failure comes back as ok=false with a readable message.
+        /// maxTokens should be the layer's real output budget: reasoning models (live finding 2026-11-22, Inkling 2 mini
+        /// via OpenRouter) spend most of a small budget thinking, and at 16 tokens returned content:null with
+        /// finish_reason "length". Probing with the real budget answers "will this model fit", and the reported
+        /// reasoning_tokens shows how close it came.
+        /// </summary>
+        public static async Task<ProviderTestResult> TestProviderAsync(string baseUrl, string model, int maxTokens, bool disableReasoning = false, int timeoutMs = WarmUpTimeoutMs)
+        {
+            var sb = new StringBuilder(256);
+            sb.Append('{');
+            AppendJsonStringField(sb, "model", model ?? "");
+            sb.Append(",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with the single word OK.\"}],\"max_tokens\":");
+            sb.Append(Math.Max(1, maxTokens).ToString(CultureInfo.InvariantCulture));
+            AppendReasoningOff(sb, disableReasoning); // mirror real requests
+            sb.Append(",\"stream\":false}");
+            string json = sb.ToString();
+
+            string url = TrimSlash(baseUrl ?? "") + "/v1/chat/completions";
+            await SendGate.WaitAsync(); // queue wait is free — latency below measures the request itself
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                using (var cts = new System.Threading.CancellationTokenSource(TimeSpan.FromMilliseconds(timeoutMs)))
+                using (HttpResponseMessage resp = await SharedHttp.PostAsync(url, new StringContent(json, Encoding.UTF8, "application/json"), cts.Token))
+                {
+                    string body = await resp.Content.ReadAsStringAsync();
+                    long ms = clock.ElapsedMilliseconds;
+                    if (!resp.IsSuccessStatusCode)
+                        return ProviderTestResult.Fail(ms, "HTTP " + (int)resp.StatusCode + " " + resp.ReasonPhrase + ": " + Truncate(body));
+
+                    // usage.completion_tokens_details.reasoning_tokens (OpenAI/OpenRouter); 0 when the server doesn't report it.
+                    int reasoning = ExtractJsonInt(body, "reasoning_tokens");
+                    string content = ExtractJsonString(body, "content");
+                    content = content == null ? "" : StripThinkBlocks(content);
+                    if (content.Length > 0)
+                        return ProviderTestResult.Ok(ms, Truncate(content), reasoning, maxTokens);
+
+                    if (FindKeyValueColon(body, "choices") < 0)
+                        return ProviderTestResult.Fail(ms, "answered, but not like an OpenAI-compatible chat server: " + Truncate(body));
+                    if (ExtractJsonString(body, "finish_reason") == "length")
+                        return ProviderTestResult.Fail(ms, "used its whole " + maxTokens + "-token budget without answering"
+                            + (reasoning > 0 ? " (" + reasoning + " tokens went to reasoning). It's a reasoning model: turn on \"Turn off model reasoning\" in the settings, or raise this layer's max output tokens" : ""), reasoning, maxTokens);
+                    return ProviderTestResult.Fail(ms, "replied with no content: " + Truncate(body), reasoning, maxTokens);
+                }
+            }
+            catch (TaskCanceledException)
+            {
+                return ProviderTestResult.Fail(clock.ElapsedMilliseconds, "no answer within " + (timeoutMs / 1000) + " s");
+            }
+            catch (HttpRequestException e)
+            {
+                string inner = e.InnerException != null ? e.InnerException.Message : null;
+                return ProviderTestResult.Fail(clock.ElapsedMilliseconds, "unreachable: " + e.Message
+                    + (inner != null && !e.Message.Contains(inner) ? " (" + inner + ")" : ""));
+            }
+            catch (Exception e)
+            {
+                // e.g. a URL without http:// (UriFormatException / InvalidOperationException from HttpClient).
+                return ProviderTestResult.Fail(clock.ElapsedMilliseconds, e.GetType().Name + ": " + e.Message);
+            }
+            finally
+            {
+                SendGate.Release();
+            }
+        }
+
         /// <summary>Shared /v1/chat/completions transport for ALL layers (Spec §7.1–§7.4): single-flight gate,
         /// per-request timeout, one retry on transport failure, both-sides-of-the-wire error logging.</summary>
         private async Task<T> SendChatCompletionAsync<T>(string baseUrl, string json, Func<string, T> parser)
@@ -211,6 +282,7 @@ namespace AIColonists.Inference
             sb.Append(",\"top_p\":").Append(request.topP.ToString(CultureInfo.InvariantCulture));
             sb.Append(",\"min_p\":").Append(request.minP.ToString(CultureInfo.InvariantCulture)); // llama-server extension; strict OpenAI servers ignore unknown keys
             sb.Append(",\"max_tokens\":").Append(request.maxTokens);
+            AppendReasoningOff(sb, request.disableReasoning);
             // Live-verified on the homelab llama.cpp Nov 9 build (:8091, 2026-11): json_schema must be an OBJECT
             // {name, schema} — the string form (which earlier E2E validated against an older build) is SILENTLY
             // IGNORED: HTTP 200 with completely unconstrained output. The Layer 1 doc is already serialized JSON,
@@ -223,7 +295,7 @@ namespace AIColonists.Inference
 
         /// <summary>Shared body builder for the schema-constrained calls (Layer 2/3). Same wire contract as
         /// BuildChatCompletionsJson — object-form json_schema, prefix-first message order (see class docs).</summary>
-        private static string BuildBody(string model, string systemPrompt, string userPrompt, float temperature, float topP, float minP, int maxTokens, string schemaName, string schemaDoc)
+        private static string BuildBody(string model, string systemPrompt, string userPrompt, float temperature, float topP, float minP, int maxTokens, bool disableReasoning, string schemaName, string schemaDoc)
         {
             var sb = new StringBuilder(1024);
             sb.Append('{');
@@ -236,6 +308,7 @@ namespace AIColonists.Inference
             sb.Append(",\"top_p\":").Append(topP.ToString(CultureInfo.InvariantCulture));
             sb.Append(",\"min_p\":").Append(minP.ToString(CultureInfo.InvariantCulture));
             sb.Append(",\"max_tokens\":").Append(maxTokens);
+            AppendReasoningOff(sb, disableReasoning);
             // Object-form json_schema (live-verified on the Nov 9 build — see BuildChatCompletionsJson). The schema doc is
             // already serialized JSON, so embed it raw as the "schema" member (no extra escaping).
             sb.Append(",\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"").Append(schemaName).Append("\",\"schema\":");
@@ -246,11 +319,34 @@ namespace AIColonists.Inference
 
         /// <summary>Layer 2 wire body (Spec §7.3). Public + static so the harness can assert on the bytes.</summary>
         public static string BuildLayer2Json(Layer2Request request) =>
-            BuildBody(request.model, request.systemPrompt, request.userPrompt, request.temperature, request.topP, request.minP, request.maxTokens, "layer2", GbnfSchemas.Layer2JsonSchema);
+            BuildBody(request.model, request.systemPrompt, request.userPrompt, request.temperature, request.topP, request.minP, request.maxTokens, request.disableReasoning, "layer2", GbnfSchemas.Layer2JsonSchema);
 
         /// <summary>Layer 3 wire body (Spec §7.4).</summary>
         public static string BuildLayer3Json(Layer3Request request) =>
-            BuildBody(request.model, request.systemPrompt, request.userPrompt, request.temperature, request.topP, request.minP, request.maxTokens, "layer3", GbnfSchemas.Layer3JsonSchema);
+            BuildBody(request.model, request.systemPrompt, request.userPrompt, request.temperature, request.topP, request.minP, request.maxTokens, request.disableReasoning, "layer3", GbnfSchemas.Layer3JsonSchema);
+
+        /// <summary>
+        /// Settings "Turn off model reasoning". Live finding 2026-11-22 (Inkling 2 mini via OpenRouter): a reasoning model
+        /// spent all 80 Layer 1 tokens thinking and returned content:null on every dispatch. reasoning_effort:"none" (the
+        /// OpenAI-standard field, which OpenRouter maps for every reasoning model) brought it to ~1 s, 0 reasoning tokens,
+        /// schema-valid JSON. Opt-in: OpenAI's own API rejects the field for non-reasoning models. llama-server ignores it.
+        /// </summary>
+        private static void AppendReasoningOff(StringBuilder sb, bool disableReasoning)
+        {
+            if (disableReasoning) sb.Append(",\"reasoning_effort\":\"none\"");
+        }
+
+        /// <summary>Exception text for a 2xx reply with no content string. Spells out the reasoning-model case (budget spent
+        /// thinking, finish_reason "length") instead of a bare "malformed", since that's the common cause and fixable in settings.</summary>
+        private static string MissingContentMessage(string responseBody)
+        {
+            int reasoning = ExtractJsonInt(responseBody, "reasoning_tokens");
+            if (ExtractJsonString(responseBody, "finish_reason") == "length")
+                return "model used its whole output-token budget without answering"
+                    + (reasoning > 0 ? " (" + reasoning + " tokens went to reasoning)" : "")
+                    + ". In settings, turn on \"Turn off model reasoning\" or raise this layer's max output tokens.";
+            return "Malformed llama-server response: " + Truncate(responseBody);
+        }
 
         private static void AppendMessage(StringBuilder sb, string role, string content)
         {
@@ -300,7 +396,7 @@ namespace AIColonists.Inference
             // response has exactly one choice, and "content" is its only key in the whole document.
             string content = ExtractJsonString(responseBody, "content");
             if (content == null)
-                throw new Exception("Malformed llama-server response: " + Truncate(responseBody));
+                throw new Exception(MissingContentMessage(responseBody));
 
             content = StripThinkBlocks(content);
 
@@ -324,7 +420,7 @@ namespace AIColonists.Inference
         {
             string content = ExtractJsonString(responseBody, "content");
             if (content == null)
-                throw new Exception("Malformed llama-server response: " + Truncate(responseBody));
+                throw new Exception(MissingContentMessage(responseBody));
 
             content = StripThinkBlocks(content);
 
@@ -354,7 +450,7 @@ namespace AIColonists.Inference
         {
             string content = ExtractJsonString(responseBody, "content");
             if (content == null)
-                throw new Exception("Malformed llama-server response: " + Truncate(responseBody));
+                throw new Exception(MissingContentMessage(responseBody));
 
             content = StripThinkBlocks(content);
 

@@ -41,6 +41,8 @@ namespace UnityEngine
         // [CONFIRMED] Verse.Text.CurFontStyle — per-font cached GUIStyle (white text on Arial_small); the tab derives its
         // wrap style from it so wrapped blocks match vanilla color/font exactly.
         public static GUIStyle CurFontStyle => new GUIStyle();
+        // [CONFIRMED 2026-11-22 against 1.7] Verse.Text.CalcHeight(string, float). Stub: one tiny-font line per 100 chars.
+        public static float CalcHeight(string text, float width) => 18f * (1 + (text ?? "").Length / 100);
     }
     // [CONFIRMED] 1.6: GUI/Text live in UnityEngine.IMGUIModule.dll (NOT CoreModule).
     // [CONFIRMED] 1.6: GUI.color / GUI.DrawTexture(Rect, Texture2D) are the standard bar-drawing primitives —
@@ -219,12 +221,49 @@ namespace Verse
     // [CONFIRMED] There is NO style-taking Label overload in Verse.Widgets (1.6) — the full Label family was dumped
     // from the real DLL: (Rect, GUIContent), (Rect, string), (Rect, TaggedString), (float, ref float, float, string),
     // (Rect, ref float, string). Word-wrapped text goes through UnityEngine.GUI.Label(Rect, string, GUIStyle) instead.
+    // [CONFIRMED 2026-11-22] BeginScrollView/EndScrollView, TextFieldNumeric<T>(Rect, ref T, ref string, float, float),
+    // DrawLineHorizontal, DrawHighlightIfMouseover: compile-checked against the real 1.7.5014 DLL (UI/SettingsWindow).
+    // TestRig.UiPoke makes every input control change what it's bound to (checkbox flips, text gets "~poked", numbers jump
+    // to max) — the settings-coverage test uses it to prove each Settings field is wired to some control.
     public static class Widgets
     {
         public static void Label(UnityEngine.Rect rect, string label) { }
-        public static void CheckboxLabeled(UnityEngine.Rect rect, string label, ref bool checkOn) { }
-        public static string TextField(UnityEngine.Rect rect, string text) => text;
+        public static void CheckboxLabeled(UnityEngine.Rect rect, string label, ref bool checkOn) { if (TestRig.UiPoke) checkOn = !checkOn; }
+        public static string TextField(UnityEngine.Rect rect, string text) => TestRig.UiPoke ? text + "~poked" : text;
         public static bool ButtonText(UnityEngine.Rect rect, string label) => false;
+        public static void TextFieldNumeric<T>(UnityEngine.Rect rect, ref T val, ref string buffer, float min = 0f, float max = 1E+09f) where T : struct
+        {
+            if (buffer == null) buffer = val.ToString();
+            if (TestRig.UiPoke) { val = (T)Convert.ChangeType(max, typeof(T)); buffer = val.ToString(); }
+        }
+        public static void BeginScrollView(UnityEngine.Rect outRect, ref UnityEngine.Vector2 scrollPosition, UnityEngine.Rect viewRect, bool showScrollbars = true) { }
+        public static void EndScrollView() { }
+        public static void DrawLineHorizontal(float x, float y, float length) { }
+        public static void DrawHighlightIfMouseover(UnityEngine.Rect rect) { }
+    }
+
+    // [CONFIRMED 2026-11-22 against 1.7] Verse.TooltipHandler.TipRegion — the real one takes a TipSignal, which strings convert to.
+    public static class TooltipHandler
+    {
+        public static void TipRegion(UnityEngine.Rect rect, string tip) { }
+    }
+
+    // [CONFIRMED 2026-11-22] Verse.Window / WindowStack: compile-checked against the real 1.7.5014 Assembly-CSharp.dll
+    // (Dialog_ProviderTest builds against it). Only the members the mod touches are stubbed.
+    public abstract class Window
+    {
+        public bool doCloseButton;
+        public bool doCloseX;
+        public bool absorbInputAroundWindow;
+        public bool closeOnClickedOutside;
+        public virtual UnityEngine.Vector2 InitialSize => new UnityEngine.Vector2(500f, 500f);
+        public abstract void DoWindowContents(UnityEngine.Rect inRect);
+    }
+
+    public class WindowStack
+    {
+        public readonly List<Window> Windows = new List<Window>(); // harness inspection only
+        public void Add(Window window) => Windows.Add(window);
     }
 
     // --- time / world access ------------------------------------------------------
@@ -235,6 +274,7 @@ namespace Verse
     {
         public static RimWorld.Planet.World World = new RimWorld.Planet.World(); // [CONFIRMED] 1.6: World moved to RimWorld.Planet
         public static TickManager TickManager = new TickManager();
+        public static WindowStack WindowStack = new WindowStack(); // [CONFIRMED 2026-11-22 against 1.7] Find.WindowStack
         // [CONFIRMED decompiled 2026-11-15] 1.6 Find has NO FactionPlayer member — the player faction is
         // RimWorld.Faction.OfPlayer (see MapPawns.FreeColonists => FreeHumanlikesOfFaction(Faction.OfPlayer)).
         // [CONFIRMED decompiled 2026-11-15] 1.6 Find.CurrentMap property → Verse.Map (null in world view). Stub: field, default null.
@@ -406,7 +446,12 @@ namespace Verse
         // can simulate the load-time throw (the real property would throw from inside).
         private string labelCapInt = "StubColonist";
         public virtual string LabelCap { get { return labelCapInt; } set { labelCapInt = value; } }
-        public string LabelShort => LabelCap; // real game: first name only; the stub keeps them in lockstep
+        // [CONFIRMED 1.7] real LabelShort = Name.ToStringShort ("Paulo"); LabelCap = "Paulo<color=#999999FF>, Dude</color>".
+        // Stub: settable; defaults to LabelCap so older tests that only set LabelCap keep working.
+        private string labelShortInt;
+        public string LabelShort { get { return labelShortInt ?? LabelCap; } set { labelShortInt = value; } }
+        // [CONFIRMED decompiled 1.7] Pawn.DevelopmentalStage + Verse.DevelopmentalStageExtensions.Newborn()/Baby().
+        public DevelopmentalStage DevelopmentalStage = DevelopmentalStage.Adult;
         public Map Map;
         // [CONFIRMED] 1.6: Pawn.Spawned / Thing.DrawPos / Thing.MapHeld — all used by decompiled MoteMaker
         // (pawn.DrawPos, thing.MapHeld); motes can only anchor to spawned pawns.
@@ -431,6 +476,15 @@ namespace Verse
         // [CONFIRMED] 1.6: pawn.interactions is a PUBLIC FIELD of type RimWorld.Pawn_InteractionsTracker (reflection probe).
         // Left null on purpose — tests assign it explicitly, which also exercises the mod's null guard.
         public RimWorld.Pawn_InteractionsTracker interactions;
+    }
+
+    // [CONFIRMED decompiled 1.7] Verse.DevelopmentalStage flags + extension predicates.
+    [Flags]
+    public enum DevelopmentalStage { None = 0, Newborn = 1, Baby = 2, Child = 4, Adult = 8 }
+    public static class DevelopmentalStageExtensions
+    {
+        public static bool Newborn(this DevelopmentalStage s) => (s & DevelopmentalStage.Newborn) != 0;
+        public static bool Baby(this DevelopmentalStage s) => (s & DevelopmentalStage.Baby) != 0;
     }
 
     // --- maps / components --------------------------------------------------------------------
@@ -472,6 +526,7 @@ namespace Verse
     // --- sensory utility hooks (scriptable for tests) ---------------------------------------------------
     public static class TestRig
     {
+        public static bool UiPoke; // see Widgets: input controls mutate their bound values while set
         public static bool CanReachDefault = true;
         public static Thing BestFoodSourceResult;
         public static Thing FindBedForResult;
@@ -653,12 +708,29 @@ namespace RimWorld
 
     // [CONFIRMED decompiled 2026-11-15] 1.6: TraitSet.allTraits is a PUBLIC List<Trait> FIELD; Trait exposes LabelCap
     // (computed), Degree (int) and Suppressed (bool) — the identity-prefix trait line + weight-seeding source.
-    public class Trait { public string LabelCap = "stub trait"; public int Degree; public bool Suppressed; }
+    public class Trait { public string LabelCap = "stub trait"; public int Degree; public bool Suppressed; public TraitDef def; }
+    // [CONFIRMED] Trait.def (TraitDef) with defName — keys the voice table (vanilla defNames read from the 1.7 TraitDefs XML).
+    public class TraitDef { public string defName = ""; }
+    // [CONFIRMED decompiled 1.7] BackstoryDef.FullDescriptionFor(Pawn) → TaggedString: resolved prose, then a blank line,
+    // then skill/work-disable lines. Stub returns `fullDescription` verbatim so tests can include that tail.
+    public class BackstoryDef
+    {
+        public string description = ""; // [CONFIRMED] Def.description: raw prose with [PAWN_*] tokens
+        public string fullDescription = "";
+        public string FullDescriptionFor(Verse.Pawn p) => fullDescription;
+    }
     public class TraitSet { public List<Trait> allTraits = new List<Trait>(); }
 
     // [CONFIRMED decompiled 2026-11-15] 1.6: the TraitSet lives on the STORY TRACKER — `public TraitSet traits` field on
     // RimWorld.Pawn_StoryTracker (Verse.Pawn has NO direct traits field; vanilla code reads story?.traits.allTraits).
-    public class Pawn_StoryTracker { public TraitSet traits = new TraitSet(); }
+    // [CONFIRMED decompiled 1.7] Childhood/Adulthood (BackstoryDef) + TitleCap (custom title, else adulthood/childhood title).
+    public class Pawn_StoryTracker
+    {
+        public TraitSet traits = new TraitSet();
+        public BackstoryDef Childhood;
+        public BackstoryDef Adulthood;
+        public string TitleCap = "";
+    }
 
     // [CONFIRMED decompiled 2026-11-15] 1.6: Pawn_SkillTracker.skills is a PUBLIC List<SkillRecord> FIELD + GetSkill(SkillDef);
     // SkillRecord carries public def (SkillDef) + levelInt (int). SkillDefOf fields include Intellectual (the learning-system
